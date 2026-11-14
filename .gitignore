@@ -1,0 +1,94 @@
+# ==========================================
+# 1. Databases & User Data (CRITICAL PRIVACY)
+# Safeguards personal portfolio, transactions & wishlist
+# ==========================================
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sql
+backend/stockintel.db*
+stockintel.db*
+postgres_data/
+redis_data/
+*.dump
+
+# ==========================================
+# 2. Environment Variables & Secret Credentials
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.pfx
+
+# ==========================================
+# 3. Python Virtual Environments & Bytecode
+# ==========================================
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+env/
+.env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================================
+# 4. Node / Next.js / Frontend Builds
+# ==========================================
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==========================================
+# 5. OS & IDE Metadata
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==========================================
+# 6. Logs & Temporary Files
+# ==========================================
+*.log
+logs/
+tmp/
+temp/
+
+# ==========================================
+# 7. Private Implementation & Setup Docs
+# ==========================================
+IMPLEMENTATION_GUIDE.md
+implementation_guide.md
+IMPLEMENTATION*.md
+SETUP.md
+setup.md
+SETUP*.md
