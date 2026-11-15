@@ -76,7 +76,29 @@ def buy_order(sandbox_id: int, order: ArenaOrderCreate, db: Session = Depends(ge
         for p in (detail.positions if detail else []):
             if p.id == pos.id:
                 return p
-        raise HTTPException(status_code=500, detail="Failed to retrieve order state")
+        return ArenaPositionOut(
+            id=pos.id,
+            sandbox_id=pos.sandbox_id,
+            symbol=pos.symbol,
+            name=pos.name or pos.symbol,
+            quantity=pos.quantity,
+            avg_buy_price=pos.avg_buy_price,
+            current_price=pos.avg_buy_price,
+            invested_amount=float(pos.avg_buy_price * pos.quantity),
+            current_value=float(pos.avg_buy_price * pos.quantity),
+            unrealized_pnl=0.0,
+            unrealized_pnl_pct=0.0,
+            target_sell_price=pos.target_sell_price,
+            ai_target_price=pos.ai_target_price,
+            custom_target_price=pos.custom_target_price,
+            stop_loss_price=pos.stop_loss_price,
+            distance_to_target_pct=None,
+            distance_to_stop_pct=None,
+            horizon=pos.horizon,
+            rationale=pos.rationale,
+            ai_score=pos.ai_score,
+            created_at=pos.created_at,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

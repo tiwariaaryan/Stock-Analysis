@@ -313,12 +313,21 @@ export default function PaperTradingArenaPage() {
     setOrderTargetSell(stock.target_sell_price);
     setOrderStopLoss(stock.stop_loss_price);
 
-    if (detail && detail.current_cash > 0 && stock.current_price > 0) {
-      const alloc = Math.max(stock.current_price, detail.current_cash * 0.15);
-      const calculatedQty = Math.max(1, Math.floor(alloc / stock.current_price));
-      setOrderQuantity(calculatedQty);
+    if (detail && stock.current_price > 0) {
+      const currentInvested = Number(detail.invested_capital || 0);
+      const startingCapital = Number(detail.initial_capital || 0);
+      const remainingCapacity = startingCapital > 0 ? Math.max(0, startingCapital - currentInvested) : Number(detail.current_cash || 0);
+      const maxSpendable = Math.min(Number(detail.current_cash || 0), remainingCapacity);
+
+      if (maxSpendable >= stock.current_price) {
+        const alloc = Math.min(maxSpendable, Math.max(stock.current_price, maxSpendable * 0.25));
+        const calculatedQty = Math.max(1, Math.floor(alloc / stock.current_price));
+        setOrderQuantity(calculatedQty);
+      } else {
+        setOrderQuantity(1);
+      }
     } else {
-      setOrderQuantity(10);
+      setOrderQuantity(1);
     }
   };
 

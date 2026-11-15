@@ -587,11 +587,10 @@ def delete_position_and_refund(db: Session, sandbox_id: int, position_id: int) -
     sb.updated_at = datetime.now(UTC)
 
     sym = pos.symbol
-    # Clean up any manual sell trades that booked fake pnl for this symbol in this sandbox
+    # Clean up all trade records (BUY/SELL) for this symbol in this sandbox so no residual or fake P&L remains
     db.query(ArenaTrade).filter(
         ArenaTrade.sandbox_id == sandbox_id,
         ArenaTrade.symbol == sym,
-        ArenaTrade.trade_type == "SELL_MANUAL",
     ).delete(synchronize_session=False)
 
     db.delete(pos)
