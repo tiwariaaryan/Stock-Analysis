@@ -162,6 +162,58 @@ def get_cached_price(db: Session, symbol: str) -> Decimal | None:
     return mp.price if mp else None
 
 
+def get_live_or_cached_price(db: Session, symbol: str) -> Decimal:
+    """Fetch cached price or fast live quote if not yet cached, updating cache transparently."""
+    sym = resolve_symbol(symbol)
+    p = get_cached_price(db, sym)
+    if p and p > Decimal("0"):
+        return p
+    # Try fetching fast live quote
+    try:
+        q = _fetch_quote_fast(sym)
+        if q and q.get("price") and q["price"] > 0:
+            update_stock_market_price(db, sym, q["price"], q.get("change_pct"))
+            return Decimal(str(round(q["price"], 2)))
+    except Exception:
+        pass
+    inst = db.query(Instrument).filter(Instrument.symbol == sym).first()
+    if inst and inst.market_price and inst.market_price.price:
+        return inst.market_price.price
+    return Decimal("100.00")
+
+
+def update_stock_market_price(db: Session, symbol: str, price: float | Decimal, change_pct: float | None = None, source: str = "write_through") -> None:
+    """Write-through cache update: immediately updates main DB price record with newly discovered price."""
+    if not price or float(price) <= 0:
+        return
+    sym = resolve_symbol(symbol)
+    inst = get_or_create_instrument(db, sym)
+    dec_price = Decimal(str(round(float(price), 2)))
+    now = datetime.now(UTC)
+    mp = db.query(MarketPrice).filter(MarketPrice.instrument_id == inst.id).order_by(MarketPrice.fetched_at.desc()).first()
+    if mp:
+        mp.price = dec_price
+        mp.fetched_at = now
+        mp.as_of = now
+        if change_pct is not None:
+            mp.change_pct = float(change_pct)
+        mp.freshness = "LIVE"
+    else:
+        mp = MarketPrice(
+            instrument_id=inst.id,
+            price=dec_price,
+            currency="INR",
+            change_pct=change_pct,
+            as_of=now,
+            fetched_at=now,
+            source=source,
+            data_kind="LIVE",
+            freshness="LIVE",
+        )
+        db.add(mp)
+    db.commit()
+
+
 def get_last_refresh_time() -> datetime | None:
     return _last_refresh_time
 

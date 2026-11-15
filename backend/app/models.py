@@ -18,6 +18,7 @@ class User(Base):
     watchlists: Mapped[list["Watchlist"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     notes: Mapped[list["AIResearchNote"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    arena_sandboxes: Mapped[list["ArenaSandbox"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Instrument(Base):
@@ -117,6 +118,7 @@ class Holding(Base):
     buy_price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     buy_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     asset_type: Mapped[str] = mapped_column(String(20), default="EQUITY")
+    ai_entry_score: Mapped[int | None] = mapped_column(nullable=True)
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="holdings")
 
@@ -177,6 +179,7 @@ class WatchlistItem(Base):
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
     tags: Mapped[str | None] = mapped_column(String(100), nullable=True)  # e.g., "dividend,bluechip"
     alert_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    ai_entry_score: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     watchlist: Mapped["Watchlist"] = relationship(back_populates="items")
@@ -218,3 +221,126 @@ class AIResearchNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     user: Mapped["User | None"] = relationship(back_populates="notes")
+
+
+class ExternalDataRecord(Base):
+    __tablename__ = "external_data_records"
+    __table_args__ = (UniqueConstraint("content_hash", name="uq_content_hash"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)  # NEWS, FUNDAMENTALS, FILING, REGULATORY, SEARCH
+    source_name: Mapped[str] = mapped_column(String(64), index=True)  # tavily, serper, ddgs, google_news, nse, screener, etc.
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)  # SHA-256 for strict deduplication
+    raw_content: Mapped[str] = mapped_column(Text)  # Complete raw HTML, Markdown, or JSON
+    extracted_data: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON-encoded normalized metrics
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    freshness_status: Mapped[str] = mapped_column(String(20), default="FRESH")
+
+
+class ArenaSandbox(Base):
+    __tablename__ = "arena_sandboxes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    category: Mapped[str] = mapped_column(String(40), default="CUSTOM")  # USER_INTUITION, AI_INSTITUTIONAL, MARKET_TIPS, CUSTOM
+    horizon: Mapped[str] = mapped_column(String(20), default="1M")  # 1W, 1M, 3M, 6M, 1Y, FLEXIBLE
+    initial_capital: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("100000.00"))
+    current_cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("100000.00"))
+    auto_execute: Mapped[bool] = mapped_column(Boolean, default=True)
+    position_order: Mapped[int] = mapped_column(default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    user: Mapped["User | None"] = relationship(back_populates="arena_sandboxes")
+    positions: Mapped[list["ArenaPosition"]] = relationship(back_populates="sandbox", cascade="all, delete-orphan")
+    trades: Mapped[list["ArenaTrade"]] = relationship(back_populates="sandbox", cascade="all, delete-orphan")
+
+
+class ArenaPosition(Base):
+    __tablename__ = "arena_positions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sandbox_id: Mapped[int] = mapped_column(ForeignKey("arena_sandboxes.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    avg_buy_price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    target_sell_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    ai_target_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    custom_target_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    stop_loss_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    horizon: Mapped[str] = mapped_column(String(20), default="1M")
+    rationale: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ai_score: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    sandbox: Mapped["ArenaSandbox"] = relationship(back_populates="positions")
+
+
+class ArenaTrade(Base):
+    __tablename__ = "arena_trades"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sandbox_id: Mapped[int] = mapped_column(ForeignKey("arena_sandboxes.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    trade_type: Mapped[str] = mapped_column(String(30))  # BUY, SELL_TARGET_HIT, SELL_STOP_LOSS, SELL_MANUAL
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    realized_pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    sandbox: Mapped["ArenaSandbox"] = relationship(back_populates="trades")
+
+
+class AIScanRun(Base):
+    __tablename__ = "ai_scan_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    batch_number: Mapped[int] = mapped_column(default=1)
+    batch_name: Mapped[str] = mapped_column(String(100))
+    stock_offset_start: Mapped[int] = mapped_column(default=1)
+    stock_offset_end: Mapped[int] = mapped_column(default=500)
+    total_screened: Mapped[int] = mapped_column(default=500)
+    top_winners_count: Mapped[int] = mapped_column(default=25)
+    top_symbol: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    top_score: Mapped[int | None] = mapped_column(nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    vault_items: Mapped[list["AITelecastVault"]] = relationship(back_populates="scan_run", cascade="all, delete-orphan")
+
+
+class AITelecastVault(Base):
+    __tablename__ = "ai_telecast_vault"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_scan_runs.id"), nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    batch_number: Mapped[int] = mapped_column(default=1, index=True)
+    batch_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cap_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    strategy_title: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    initial_ai_score: Mapped[int | None] = mapped_column(nullable=True)
+    current_ai_score: Mapped[int | None] = mapped_column(nullable=True)
+    score_change: Mapped[int] = mapped_column(default=0)
+    action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    catalyst_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    horizon_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    horizon_upside_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_top_setup: Mapped[bool] = mapped_column(Boolean, default=False)
+    telecast_table: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    scan_run: Mapped["AIScanRun | None"] = relationship(back_populates="vault_items")
+    user: Mapped["User | None"] = relationship()

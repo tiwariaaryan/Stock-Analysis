@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import StockModal from "@/components/StockModal";
+import TrendAnalysisModal from "@/components/TrendAnalysisModal";
 import { useApi } from "@/components/useApi";
 
 type WatchlistItem = {
@@ -35,6 +36,13 @@ type DeepAnalysis = {
   recommendation_sub: string;
   recommendation_color: string;
   composite_score: number;
+  phase_a_score?: number;
+  phase_b_score?: number;
+  phase_c_score?: number;
+  veto_triggered?: boolean;
+  forensic_status?: string;
+  management_tone?: string;
+  catalyst_probability_pct?: number;
   summary_reason: string;
   ai_support_price: number;
   recommended_stop_loss: number;
@@ -117,6 +125,8 @@ export default function WishlistPage() {
   const [loading, setLoading] = useState(true);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [aiLadders, setAiLadders] = useState<any>(null);
+  const [convictionData, setConvictionData] = useState<any>(null);
+  const [convictionLoading, setConvictionLoading] = useState(false);
 
   // 2-Year Deep Analysis State
   const [deepAudit, setDeepAudit] = useState<WishlistDeepAudit | null>(null);
@@ -160,6 +170,7 @@ export default function WishlistPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [modalStock, setModalStock] = useState<string | null>(null);
+  const [trendStock, setTrendStock] = useState<string | null>(null);
 
   // 1. Fetch all watchlists
   const loadWatchlists = async () => {
@@ -323,7 +334,19 @@ export default function WishlistPage() {
     } catch {}
   };
 
-  // 6. Create new watchlist
+  // 6. AI Conviction Scores
+  const fetchConvictionScores = async () => {
+    if (!selectedWId) return;
+    if (convictionData) { setConvictionData(null); return; }
+    setConvictionLoading(true);
+    try {
+      const res = await fetch(`${API}/api/v1/strategy/ai/conviction-scores/${selectedWId}`);
+      if (res.ok) setConvictionData(await res.json());
+    } catch {}
+    setConvictionLoading(false);
+  };
+
+  // 7. Create new watchlist
   const handleCreateWatchlist = async () => {
     if (!newWName.trim()) return;
     setSubmitting(true);
@@ -372,12 +395,18 @@ export default function WishlistPage() {
   // Map analysis by item_id
   const analysisMap = new Map((deepAudit?.items || []).map((x) => [x.item_id, x.analysis]));
 
-  // Filter items
-  const filteredItems = items.filter((it) => {
-    if (filterRec === "ALL") return true;
-    const a = analysisMap.get(it.id);
-    return a?.recommendation === filterRec;
-  });
+  // Filter and sort items — highest AI score first
+  const filteredItems = items
+    .filter((it) => {
+      if (filterRec === "ALL") return true;
+      const a = analysisMap.get(it.id);
+      return a?.recommendation === filterRec;
+    })
+    .sort((a, b) => {
+      const scoreA = analysisMap.get(a.id)?.composite_score ?? 0;
+      const scoreB = analysisMap.get(b.id)?.composite_score ?? 0;
+      return scoreB - scoreA;
+    });
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5 relative">
@@ -489,6 +518,15 @@ export default function WishlistPage() {
             + New List
           </button>
           <button
+            onClick={fetchConvictionScores}
+            disabled={convictionLoading || !selectedWId}
+            className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border ${
+              convictionData ? "bg-amber-500/10 border-amber-500/20 text-amber-400" : "bg-bg-card border-border text-txt-secondary hover:text-amber-400 hover:border-amber-500/40"
+            } disabled:opacity-50`}
+          >
+            {convictionLoading ? "Scoring..." : convictionData ? "Hide Scores" : "🏆 AI Conviction"}
+          </button>
+          <button
             onClick={() => setShowAddModal(true)}
             className="px-3.5 py-2 bg-accent hover:bg-accent-dark text-white text-xs font-medium rounded-lg transition-colors"
           >
@@ -496,6 +534,58 @@ export default function WishlistPage() {
           </button>
         </div>
       </div>
+
+      {/* AI Conviction Scores Panel */}
+      {convictionData && convictionData.items && convictionData.items.length > 0 && (
+        <div className="bg-bg-card border border-amber-500/20 rounded-xl p-4 animate-fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">🏆 AI Conviction Scores</h3>
+            <span className="text-[10px] text-txt-dim">{convictionData.api_calls?.total || 0} API calls</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {convictionData.items.map((item: any) => {
+              const callColor = item.call === "STRONG_BUY" || item.call === "BUY_ON_DIP" ? "gain" :
+                item.call === "AVOID" ? "loss" : "yellow-400";
+              return (
+                <div key={item.symbol} className="bg-bg-primary rounded-lg p-3 border border-border">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-txt-primary">{item.symbol}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded bg-${callColor}/15 text-${callColor} border border-${callColor}/20`}>
+                        {item.call?.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <span className={`text-lg font-bold ${item.conviction_score >= 70 ? "text-gain" : item.conviction_score >= 50 ? "text-yellow-400" : "text-loss"}`}>
+                      {item.conviction_score}/100
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-txt-secondary mb-2">{item.reasoning}</p>
+                  <div className="grid grid-cols-4 gap-1.5 text-center">
+                    <div className="bg-bg-card rounded px-1.5 py-1">
+                      <p className="text-[8px] text-txt-dim">Entry</p>
+                      <p className="text-[10px] font-mono text-txt-primary">₹{item.entry_zone_low}-{item.entry_zone_high}</p>
+                    </div>
+                    <div className="bg-bg-card rounded px-1.5 py-1">
+                      <p className="text-[8px] text-txt-dim">Stop Loss</p>
+                      <p className="text-[10px] font-mono text-loss">₹{item.stop_loss}</p>
+                    </div>
+                    <div className="bg-bg-card rounded px-1.5 py-1">
+                      <p className="text-[8px] text-txt-dim">Target 6M</p>
+                      <p className="text-[10px] font-mono text-gain">₹{item.target_6m}</p>
+                    </div>
+                    <div className="bg-bg-card rounded px-1.5 py-1">
+                      <p className="text-[8px] text-txt-dim">Sentiment</p>
+                      <p className="text-[10px] font-mono text-txt-primary">{item.sentiment_score}/100</p>
+                    </div>
+                  </div>
+                  {item.catalyst && <p className="text-[9px] text-accent-light mt-1.5">Catalyst: {item.catalyst}</p>}
+                  {item.risk_factors && <p className="text-[9px] text-loss mt-0.5">Risk: {item.risk_factors}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* In-page Active Scanning Banner */}
       {analyzing && (
@@ -588,7 +678,7 @@ export default function WishlistPage() {
           <div className="flex items-center gap-2">
             <span className="text-amber-400 text-sm font-bold">🎯</span>
             <h3 className="text-xs font-bold text-amber-200 uppercase tracking-wider">
-              Immediate Buy Target Alert — 3-Stage Dip Plan Triggered
+              Immediate Buy Target Alert — Target Buy Price Reached!
             </h3>
           </div>
           <div className="space-y-1.5">
@@ -632,14 +722,13 @@ export default function WishlistPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[700px]">
+              <table className="w-full text-sm min-w-[560px]">
                 <thead>
                   <tr className="border-b border-border bg-bg-primary/50 text-[11px] text-txt-dim font-medium">
                     <th className="px-3.5 py-3 text-left">Stock</th>
-                    <th className="px-3 py-3 text-center min-w-[180px]">Overall AI Score & Signal</th>
+                    <th className="px-3 py-3 text-center min-w-[170px]">Overall AI Score & Signal</th>
                     <th className="px-3 py-3 text-right">Live CMP</th>
-                    <th className="px-3 py-3 text-right">Target Buy</th>
-                    <th className="px-3 py-3 text-left min-w-[160px]">3-Stage Dip Ladder</th>
+                    <th className="px-3 py-3 text-right min-w-[130px]">Target Buy</th>
                     <th className="px-2 py-3 text-right w-16"></th>
                   </tr>
                 </thead>
@@ -666,16 +755,42 @@ export default function WishlistPage() {
                       >
                         {/* Stock Symbol */}
                         <td className="px-3.5 py-3">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setModalStock(it.symbol);
-                            }}
-                            className="font-bold text-accent-light hover:underline text-xs block text-left"
-                          >
-                            {it.symbol}
-                          </button>
-                          {it.name && <span className="text-[10px] text-txt-muted block truncate max-w-[110px]">{it.name}</span>}
+                          <div className="flex items-center gap-2">
+                            {a ? (
+                              <span
+                                className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded border"
+                                style={{
+                                  backgroundColor: `${a.recommendation_color}18`,
+                                  borderColor: `${a.recommendation_color}60`,
+                                  color: a.recommendation_color,
+                                }}
+                                title={`Live Dynamic AI Score: ${a.composite_score}/100 (${a.recommendation})`}
+                              >
+                                [{a.composite_score}]
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-bg-card border border-border text-txt-muted">
+                                [—]
+                              </span>
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalStock(it.symbol);
+                              }}
+                              className="font-bold text-accent-light hover:underline text-xs block text-left"
+                            >
+                              {it.symbol}
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {it.name && <span className="text-[10px] text-txt-muted truncate max-w-[80px]">{it.name}</span>}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setTrendStock(it.symbol); }}
+                              className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent-light border border-accent/20 hover:bg-accent/20 transition-colors"
+                              title="AI Trend Analysis"
+                            >📈 Trend</button>
+                          </div>
                         </td>
 
                         {/* Bold & Prominent Overall AI Score & Recommendation Badge */}
@@ -738,51 +853,22 @@ export default function WishlistPage() {
                           {cmp ? `₹${fmt(cmp)}` : "—"}
                         </td>
 
-                        {/* Target Buy */}
+                        {/* Target Buy with distance % */}
                         <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <EditableTargetPrice
                             value={tb}
                             onSave={(newPrice) => updateTargetPrice(it.id, newPrice)}
                           />
-                          {isTargetHit && (
-                            <span className="block text-[9px] font-bold text-gain mt-0.5 animate-pulse">
-                              Target Hit!
+                          {isTargetHit ? (
+                            <span className="inline-block text-[9px] font-bold text-gain bg-gain/15 px-1.5 py-0.5 rounded mt-0.5 animate-pulse">
+                              🎯 Target Hit!
                             </span>
-                          )}
-                        </td>
-
-                        {/* 3-Stage Dip Ladder */}
-                        <td className="px-3 py-3">
-                          {(() => {
-                            const ladderInfo = aiLadders?.items?.find((x: any) => x.item_id === it.id);
-                            if (!ladderInfo) return <span className="text-[10px] text-txt-dim">Calculating...</span>;
-                            const l = ladderInfo.ladder || [];
-                            return (
-                              <div className="space-y-0.5 text-[10px]">
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-txt-dim">T1 (30%):</span>
-                                  <strong className="font-mono text-txt-primary">₹{fmt(l[0]?.price)}</strong>
-                                  <span
-                                    className={`text-[8px] px-1 rounded ${
-                                      l[0]?.status === "TRIGGERED" ? "bg-gain/20 text-gain font-bold" : "text-txt-dim"
-                                    }`}
-                                  >
-                                    {l[0]?.status}
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-txt-dim">T2 (40%):</span>
-                                  <strong className="font-mono text-txt-secondary">₹{fmt(l[1]?.price)}</strong>
-                                  <span className="text-[8px] text-txt-dim">{l[1]?.status}</span>
-                                </div>
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-txt-dim">T3 (30%):</span>
-                                  <strong className="font-mono text-txt-secondary">₹{fmt(l[2]?.price)}</strong>
-                                  <span className="text-[8px] text-txt-dim">{l[2]?.status}</span>
-                                </div>
-                              </div>
-                            );
-                          })()}
+                          ) : tb && cmp ? (
+                            <span className="block text-[9px] font-mono text-txt-dim mt-0.5">
+                              {(((cmp - tb) / tb) * 100) > 0 ? "+" : ""}
+                              {(((cmp - tb) / tb) * 100).toFixed(1)}% away
+                            </span>
+                          ) : null}
                         </td>
 
                         {/* Actions */}
@@ -984,6 +1070,32 @@ export default function WishlistPage() {
                         {selectedStockAnalysis.diff_label}
                       </span>
                     )}
+                  </div>
+                </div>
+
+                {/* 3-Pillar Institutional AI Engine Scorecard Banner with Explicit Sum */}
+                <div className="mt-2.5 p-2 rounded-lg bg-bg-card border border-border/70 text-xs font-mono space-y-1.5">
+                  <div className="flex items-center justify-between border-b border-border/50 pb-1">
+                    <span className="text-[10px] text-txt-muted uppercase font-bold">3-Pillar Institutional Formula</span>
+                    <span className="text-[11px] font-extrabold text-txt-primary">
+                      Final Score (M + F + AI) = <strong className="text-cyan-400">{selectedStockAnalysis.composite_score}/100</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-0.5">
+                    <div className="text-center flex-1">
+                      <span className="text-[9px] text-cyan-400 uppercase font-bold block">Phase A Math</span>
+                      <strong className="text-xs text-txt-primary">{selectedStockAnalysis.phase_a_score ?? 30}/35</strong>
+                    </div>
+                    <span className="text-slate-500 font-bold text-xs">+</span>
+                    <div className="text-center flex-1">
+                      <span className="text-[9px] text-emerald-400 uppercase font-bold block">Phase B Flow</span>
+                      <strong className="text-xs text-txt-primary">{selectedStockAnalysis.phase_b_score ?? 30}/35</strong>
+                    </div>
+                    <span className="text-slate-500 font-bold text-xs">+</span>
+                    <div className="text-center flex-1">
+                      <span className="text-[9px] text-indigo-400 uppercase font-bold block">Phase C AI</span>
+                      <strong className="text-xs text-txt-primary">{selectedStockAnalysis.phase_c_score ?? 25}/30</strong>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1434,6 +1546,7 @@ export default function WishlistPage() {
       )}
 
       {modalStock && <StockModal symbol={modalStock} onClose={() => setModalStock(null)} />}
+      {trendStock && <TrendAnalysisModal symbol={trendStock} onClose={() => setTrendStock(null)} />}
     </div>
   );
 }

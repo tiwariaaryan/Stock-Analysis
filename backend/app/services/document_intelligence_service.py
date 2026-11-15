@@ -147,6 +147,37 @@ def get_company_filings_dossier(symbol: str) -> dict[str, Any]:
         "Official Registry", "NSE Clause 35 Shareholding Filing", 2, 0.98, "VERIFIED"
     ).to_dict())
 
+    # 10. Ingest Verified Screener.in Fundamentals & Ratios
+    try:
+        from ..providers.screener_provider import ScreenerFundamentalsProvider
+        from ..database import SessionLocal
+        from ..services.data_ingestion_service import store_external_record
+        import json
+
+        screener_data = ScreenerFundamentalsProvider().get_fundamentals(clean)
+        if screener_data.get("available") and screener_data.get("ratios"):
+            ratios = screener_data["ratios"]
+            for r_name, r_val in ratios.items():
+                if isinstance(r_val, (int, float)):
+                    metrics.append(ExtractedMetric(
+                        clean, r_name, r_val, "%" if "ROCE" in r_name or "ROE" in r_name or "Yield" in r_name else "Ratio/INR",
+                        "Latest Annual/Quarter", "Consolidated", "Screener.in Verified Ratios", 1, 0.96, "VERIFIED"
+                    ).to_dict())
+
+            with SessionLocal() as s_db:
+                store_external_record(
+                    db=s_db,
+                    category="FUNDAMENTALS",
+                    source_name="screener",
+                    raw_content=json.dumps(screener_data, default=str),
+                    symbol=clean,
+                    source_url=screener_data.get("source_url"),
+                    title=f"Screener Fundamentals: {clean}",
+                    extracted_data=ratios,
+                )
+    except Exception:
+        pass
+
     # Business Intelligence & Management Guidance
     business_outlook = (
         f"{clean} management guidance emphasizes continued capacity ramp-up, disciplined debt control, "

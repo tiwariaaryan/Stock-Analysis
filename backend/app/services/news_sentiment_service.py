@@ -38,6 +38,45 @@ def fetch_stock_news(symbol: str) -> list[dict[str, Any]]:
     old_https = os.environ.pop("https_proxy", None)
 
     news_items = []
+    # Deduplication set
+    seen_titles = set()
+
+    # 1. Fetch live news via Google News RSS (Indian financial wire)
+    try:
+        from ..providers.rss_news_provider import RSSNewsProvider
+        from ..database import SessionLocal
+        from ..services.data_ingestion_service import store_external_record
+
+        rss_items = RSSNewsProvider().fetch_google_news(f"{clean} NSE share news", max_items=6)
+        with SessionLocal() as s_db:
+            for r_item in rss_items:
+                norm_title = re.sub(r'[^a-zA-Z0-9]', '', r_item["title"].lower())
+                if norm_title in seen_titles:
+                    continue
+                seen_titles.add(norm_title)
+                news_items.append({
+                    "title": r_item["title"],
+                    "publisher": r_item.get("publisher", "Financial Press"),
+                    "url": r_item.get("link", ""),
+                    "published_at": r_item.get("published_at", datetime.now(UTC).isoformat()),
+                })
+                # Persist to external data store
+                try:
+                    store_external_record(
+                        db=s_db,
+                        category="NEWS",
+                        source_name="google_news_rss",
+                        raw_content=f"{r_item['title']}\n{r_item.get('snippet', '')}",
+                        symbol=clean,
+                        source_url=r_item.get("link"),
+                        title=r_item["title"],
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 2. Also fetch yfinance news if available
     try:
         t = yf.Ticker(f"{clean}.NS")
         raw_news = getattr(t, "news", []) or []
@@ -45,12 +84,10 @@ def fetch_stock_news(symbol: str) -> list[dict[str, Any]]:
             t_bo = yf.Ticker(f"{clean}.BO")
             raw_news = getattr(t_bo, "news", []) or []
 
-        seen_titles = set()
         for item in raw_news:
             title = (item.get("title") or "").strip()
             if not title:
                 continue
-            # Simple deduplication by normalized headline
             norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())
             if norm_title in seen_titles:
                 continue
@@ -174,23 +211,15 @@ def analyze_news_sentiment(symbol: str) -> dict[str, Any]:
         sentiment_color = "#f59e0b"
         sentiment_summary = f"Balanced media coverage; no extreme positive catalysts or acute governance red flags."
 
-    # Try LLM enhancement if Gemini client is active (optional enhancement)
-    try:
-        client = get_gemini_client()
-        if client and len(analyzed_articles) > 0:
-            prompt = (
-                f"You are a Dalal Street equity research analyst. Summarize in 2 concise sentences the market sentiment "
-                f"for Indian stock {clean} based on these headlines:\n" +
-                "\n".join([f"- {a['title']}" for a in analyzed_articles[:4]])
-            )
-            resp = client.models.generate_content(
-                model=get_model_name(),
-                contents=prompt,
-            )
-            if resp.text:
-                sentiment_summary = resp.text.strip()
-    except Exception:
-        pass
+    # Deterministic Dalal Street summary based on analyzed signals
+    if gov_flags:
+        sentiment_summary = f"Governance Alert: Material regulatory or audit scrutiny detected in recent announcements."
+    elif final_sentiment_score >= 65:
+        sentiment_summary = f"Bullish momentum: Strong operational order flow and positive financial coverage."
+    elif final_sentiment_score <= 42:
+        sentiment_summary = f"Defensive stance: Headwinds or negative earnings pressures identified in filings."
+    else:
+        sentiment_summary = f"Consolidation: Balanced media coverage without extreme directional bias."
 
     result = {
         "symbol": clean,

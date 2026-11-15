@@ -164,6 +164,7 @@ class WatchlistOut(BaseModel):
     description: str | None = None
     is_default: bool = False
     items_count: int = 0
+    symbols: list[str] = []
     created_at: datetime
 
 
@@ -209,3 +210,147 @@ class ChatResponse(BaseModel):
     reply: str
     session_id: int | None = None
     referenced_symbols: list[str] = []
+
+
+class ArenaSandboxCreate(BaseModel):
+    name: str
+    description: str | None = None
+    category: str = "CUSTOM"  # USER_INTUITION, AI_INSTITUTIONAL, MARKET_TIPS, CUSTOM
+    horizon: str = "1M"  # 1W, 1M, 3M, 6M, 1Y, FLEXIBLE
+    initial_capital: float = 100000.0
+    auto_execute: bool = True
+
+
+class ArenaSandboxUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    auto_execute: bool | None = None
+    horizon: str | None = None
+    position_order: int | None = None
+
+
+class ArenaPositionUpdate(BaseModel):
+    quantity: float | None = None
+    custom_target_price: float | None = None
+    stop_loss_price: float | None = None
+
+
+class ArenaReorderRequest(BaseModel):
+    sandbox_ids: list[int]
+
+
+class ArenaOrderCreate(BaseModel):
+    symbol: str
+    quantity: float
+    target_sell_price: float | None = None
+    stop_loss_price: float | None = None
+    horizon: str = "1M"
+    rationale: str | None = None
+    custom_buy_price: float | None = None
+
+
+class ArenaImportAIPicks(BaseModel):
+    horizon: str = "1M"
+    min_score: int = 65
+    allocation_pct_per_stock: float = 20.0
+    max_stocks: int = 5
+
+
+class ArenaCapitalAdjust(BaseModel):
+    amount: float
+
+
+class ArenaPositionOut(BaseModel):
+    id: int
+    sandbox_id: int
+    symbol: str
+    name: str | None = None
+    quantity: float
+    avg_buy_price: float
+    current_price: float | None = None
+    invested_amount: float
+    current_value: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+    target_sell_price: float | None = None
+    ai_target_price: float | None = None
+    custom_target_price: float | None = None
+    stop_loss_price: float | None = None
+    distance_to_target_pct: float | None = None
+    distance_to_stop_pct: float | None = None
+    horizon: str
+    rationale: str | None = None
+    ai_score: int | None = None
+    created_at: datetime
+
+
+class ArenaTradeOut(BaseModel):
+    id: int
+    sandbox_id: int
+    symbol: str
+    trade_type: str
+    quantity: float
+    price: float
+    total_amount: float
+    realized_pnl: float
+    realized_pnl_pct: float
+    notes: str | None = None
+    executed_at: datetime
+
+
+class ArenaSandboxDetail(BaseModel):
+    id: int
+    user_id: int | None = None
+    name: str
+    description: str | None = None
+    category: str
+    horizon: str
+    initial_capital: float
+    current_cash: float
+    invested_capital: float
+    total_value: float
+    total_pnl: float
+    total_pnl_pct: float
+    realized_pnl: float
+    unrealized_pnl: float
+    win_rate_pct: float
+    trade_count: int
+    auto_execute: bool
+    position_order: int = 0
+    is_active: bool
+    created_at: datetime
+    positions: list[ArenaPositionOut] = []
+    trades: list[ArenaTradeOut] = []
+
+
+class ArenaSandboxSummary(BaseModel):
+    id: int
+    name: str
+    category: str
+    horizon: str
+    initial_capital: float
+    current_cash: float
+    invested_capital: float = 0.0
+    total_value: float
+    total_pnl: float
+    total_pnl_pct: float
+    win_rate_pct: float
+    position_count: int
+    trade_count: int
+    auto_execute: bool
+    position_order: int = 0
+    created_at: datetime
+
+
+class ArenaLeaderboardItem(BaseModel):
+    id: int
+    name: str
+    category: str
+    horizon: str
+    initial_capital: float
+    total_value: float
+    total_pnl: float
+    total_pnl_pct: float
+    win_rate_pct: float
+    trade_count: int
+    rank: int

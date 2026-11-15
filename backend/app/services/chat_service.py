@@ -438,8 +438,16 @@ FORMATTING RULES:
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "parts": [{"text": message}]})
 
-    models_to_try = [get_chat_model_name(), "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", get_model_name()]
-    unique_models = list(dict.fromkeys(m for m in models_to_try if m))
+    models_to_try = [
+        get_chat_model_name(),
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
+        get_model_name(),
+    ]
+    unique_models = [m for m in dict.fromkeys(models_to_try) if m]
 
     chat_tools = [get_stock_quote, get_market_indices, get_my_portfolio_summary, get_my_wishlist, get_stock_ai_strategy, get_stock_institutional_report]
 
@@ -451,7 +459,7 @@ FORMATTING RULES:
     reply_text = None
     last_err = ""
     try:
-        active_client = client or get_gemini_client()
+        active_client = client or get_chat_client() or get_gemini_client()
         if not active_client:
             return {"reply": "Gemini API key not configured.", "session_id": session.id}
 
@@ -682,7 +690,7 @@ IMPORTANT:
     reply_text = None
     last_err = ""
     try:
-        active_client = client or get_gemini_client()
+        active_client = client or get_chat_client() or get_gemini_client()
         if not active_client:
             return {"reply": "Gemini API key not configured.", "session_id": session.id}
 

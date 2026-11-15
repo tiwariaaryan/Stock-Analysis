@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     fyers_client_id: str | None = None
     fyers_client_secret: str | None = None
     fyers_redirect_uri: str | None = None
+    serper_api_key: str | None = None
+    tavily_api_key: str | None = None
+    gmail_address: str | None = None
+    gmail_app_password: str | None = None
+    notification_email: str | None = None
     market_data_max_age_minutes: int = 20
 
     @property

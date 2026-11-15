@@ -167,6 +167,8 @@ def portfolio_analytics(portfolio_id: int, db: Session = Depends(get_db)):
         invested = float(h.quantity * h.buy_price)
         total_invested += h.quantity * h.buy_price
         buy_date = h.buy_date or datetime.now(UTC)
+        if buy_date.tzinfo is None:
+            buy_date = buy_date.replace(tzinfo=UTC)
         cash_flows.append((buy_date, -invested))
 
         cmp = get_cached_price(db, h.symbol)

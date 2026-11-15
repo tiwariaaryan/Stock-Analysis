@@ -17,6 +17,24 @@ from ..services.market_service import (
 router = APIRouter(prefix="/api/v1")
 
 
+@router.post("/market/stocks/{symbol}/sync")
+async def sync_single_stock(symbol: str, db: Session = Depends(get_db)):
+    """Live Sync: on-demand single stock price fetch from free providers (Google Finance / yfinance)."""
+    resolved = resolve_symbol(symbol)
+    q = await market_data.quote(resolved)
+    if q and q.price is not None:
+        inst = get_or_create_instrument(db, resolved)
+        cache_market_price(db, inst, q)
+        return {
+            "symbol": resolved,
+            "price": float(q.price),
+            "source": q.source,
+            "status": "synced",
+            "as_of": q.as_of.isoformat() if q.as_of else datetime.now(UTC).isoformat(),
+        }
+    raise HTTPException(status_code=502, detail=f"Could not sync live quote for {symbol}")
+
+
 @router.get("/quotes/{symbol}", response_model=Quote)
 async def quote(symbol: str, db: Session = Depends(get_db)):
     if not symbol.replace("-", "").replace("_", "").isalnum():

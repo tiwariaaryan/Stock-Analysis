@@ -7,6 +7,7 @@ const nav = [
   { href: "/ai-intelligence", label: "AI Intelligence", icon: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" },
   { href: "/market", label: "Live Market", icon: "M22 7l-8.5 8.5-4-4L2 17 M16 7h6v6" },
   { href: "/portfolio", label: "Portfolio", icon: "M21 12V7H5a2 2 0 0 1 0-4h14v4 M3 5v14a2 2 0 0 0 2 2h16v-5 M18 12a2 2 0 0 0 0 4h4v-4Z" },
+  { href: "/arena", label: "Paper Arena", icon: "M6 9H4.5a2.5 2.5 0 0 1 0-5H6 M18 9h1.5a2.5 2.5 0 0 0 0-5H18 M4 22h16 M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1h10v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34 M6 4h12v7a6 6 0 0 1-12 0V4z" },
   { href: "/wishlist", label: "Wishlist", icon: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" },
   { href: "/chat", label: "AI Chat", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
 ];

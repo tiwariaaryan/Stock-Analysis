@@ -12,22 +12,40 @@ router = APIRouter(prefix="/api/v1/watchlists")
 
 
 @router.get("", response_model=list[WatchlistOut])
-def list_watchlists(user_id: int, db: Session = Depends(get_db)):
-    lists = db.query(Watchlist).filter(Watchlist.user_id == user_id).order_by(Watchlist.created_at.desc()).all()
+def list_watchlists(user_id: int | None = None, db: Session = Depends(get_db)):
+    target_user_id = user_id if user_id is not None else 1
+    lists = db.query(Watchlist).filter(Watchlist.user_id == target_user_id).order_by(Watchlist.created_at.desc()).all()
+    if not lists:
+        # Ensure every user has at least one default watchlist
+        default_wl = Watchlist(
+            user_id=target_user_id,
+            name="My Wishlist",
+            description="Default wishlist",
+            is_default=True,
+            created_at=datetime.now(UTC),
+        )
+        db.add(default_wl)
+        db.commit()
+        db.refresh(default_wl)
+        lists = [default_wl]
+
     return [
         WatchlistOut(
             id=w.id, user_id=w.user_id, name=w.name,
             description=w.description, is_default=w.is_default,
-            items_count=len(w.items), created_at=w.created_at,
+            items_count=len(w.items),
+            symbols=[it.symbol for it in w.items],
+            created_at=w.created_at,
         )
         for w in lists
     ]
 
 
 @router.post("", response_model=WatchlistOut)
-def create_watchlist(data: WatchlistCreate, user_id: int, db: Session = Depends(get_db)):
+def create_watchlist(data: WatchlistCreate, user_id: int | None = None, db: Session = Depends(get_db)):
+    target_user_id = user_id if user_id is not None else 1
     w = Watchlist(
-        user_id=user_id, name=data.name.strip(),
+        user_id=target_user_id, name=data.name.strip(),
         description=data.description, is_default=False,
         created_at=datetime.now(UTC),
     )
@@ -37,7 +55,9 @@ def create_watchlist(data: WatchlistCreate, user_id: int, db: Session = Depends(
     return WatchlistOut(
         id=w.id, user_id=w.user_id, name=w.name,
         description=w.description, is_default=w.is_default,
-        items_count=0, created_at=w.created_at,
+        items_count=0,
+        symbols=[],
+        created_at=w.created_at,
     )
 
 
@@ -77,10 +97,24 @@ def add_watchlist_item(watchlist_id: int, data: WatchlistItemCreate, db: Session
     existing = db.query(WatchlistItem).filter(
         WatchlistItem.watchlist_id == watchlist_id, WatchlistItem.symbol == sym,
     ).first()
-    if existing:
-        raise HTTPException(400, f"{sym} is already in this watchlist")
-
     inst = get_or_create_instrument(db, sym)
+    if existing:
+        if data.target_buy_price is not None:
+            existing.target_buy_price = data.target_buy_price
+        if data.target_sell_price is not None:
+            existing.target_sell_price = data.target_sell_price
+        if data.notes:
+            existing.notes = data.notes
+        db.commit()
+        db.refresh(existing)
+        return WatchlistItemOut(
+            id=existing.id, watchlist_id=existing.watchlist_id, symbol=existing.symbol,
+            name=inst.name if inst else existing.symbol, current_price=None,
+            target_buy_price=existing.target_buy_price,
+            target_sell_price=existing.target_sell_price,
+            notes=existing.notes, tags=existing.tags,
+            alert_active=existing.alert_active, created_at=existing.created_at,
+        )
     item = WatchlistItem(
         watchlist_id=watchlist_id, instrument_id=inst.id, symbol=sym,
         target_buy_price=data.target_buy_price,

@@ -54,6 +54,24 @@ def verify_pin(user_id: int, data: PinVerify, db: Session = Depends(get_db)):
     return user
 
 
+@router.delete("/{user_id}")
+def delete_profile(user_id: int, data: PinVerify, db: Session = Depends(get_db)):
+    """Permanently delete a user profile and all associated data after PIN verification."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "Profile not found")
+    if user.preferences != _hash_pin(data.pin):
+        raise HTTPException(401, "Incorrect PIN")
+
+    # Protect primary accounts from accidental deletion
+    if user.id in (1, 2) or user.username in ("default_user", "aaryan"):
+        raise HTTPException(403, f"Protected account '{user.display_name}' cannot be deleted.")
+
+    db.delete(user)
+    db.commit()
+    return {"status": "deleted", "user_id": user_id, "username": user.username}
+
+
 @router.delete("/{user_id}/data")
 def wipe_user_data(user_id: int, data: PinVerify, db: Session = Depends(get_db)):
     """Wipe all data for a user (portfolios, watchlists, chat) after PIN verification."""

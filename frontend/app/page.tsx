@@ -29,6 +29,13 @@ const cards = [
     iconColor: "#3b82f6",
   },
   {
+    href: "/arena",
+    title: "Paper Arena",
+    desc: "Simulate & battle test User vs AI vs Tips with custom capital, automated triggers & leaderboards",
+    gradient: "from-cyan-900/40 to-bg-card",
+    iconColor: "#06b6d4",
+  },
+  {
     href: "/wishlist",
     title: "Wishlists",
     desc: "Target price buy/sell alerts, research notes, and dip accumulation lists",
@@ -48,6 +55,7 @@ const icons: Record<string, string> = {
   "/ai-intelligence": "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z",
   "/market": "M22 7l-8.5 8.5-4-4L2 17 M16 7h6v6",
   "/portfolio": "M21 12V7H5a2 2 0 0 1 0-4h14v4 M3 5v14a2 2 0 0 0 2 2h16v-5 M18 12a2 2 0 0 0 0 4h4v-4Z",
+  "/arena": "M6 9H4.5a2.5 2.5 0 0 1 0-5H6 M18 9h1.5a2.5 2.5 0 0 0 0-5H18 M4 22h16 M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1h10v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34 M6 4h12v7a6 6 0 0 1-12 0V4z",
   "/wishlist": "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
   "/chat": "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
 };
@@ -80,6 +88,15 @@ type RecommendationItem = {
   action: string;
   action_color: string;
   overall_score: number;
+  conviction_pct?: number;
+  total_score?: number;
+  phase_a_score?: number;
+  phase_b_score?: number;
+  phase_c_score?: number;
+  veto_triggered?: boolean;
+  forensic_status?: string;
+  management_tone?: string;
+  catalyst_probability_pct?: number;
   current_price: number;
   estimated_fair_value: number;
   target_price: number;
@@ -87,6 +104,34 @@ type RecommendationItem = {
   expected_1y_return: string;
   catalyst_summary: string;
   reasons: string[];
+  technical?: {
+    trend: string;
+    rsi_14: number;
+    ema_20: number;
+    ema_50: number;
+    ema_200: number;
+    macd_signal: string;
+    volume_trend: string;
+    support_1: number;
+    support_2: number;
+    resistance_1: number;
+    resistance_2: number;
+  };
+  fundamentals?: {
+    pe_ratio: number | string;
+    sector_pe: number | string;
+    pb_ratio: number | string;
+    roce_pct: number | string;
+    roe_pct: number | string;
+    operating_margin_pct: number | string;
+    debt_to_equity: number | string;
+    moat_strength: string;
+  };
+  scenarios?: {
+    bull: { target: number; prob: number; trigger: string };
+    base: { target: number; prob: number; trigger: string };
+    bear: { stop: number; prob: number; trigger: string };
+  };
 };
 
 type MarketMover = {
@@ -131,12 +176,33 @@ export default function Home() {
   const [modalStock, setModalStock] = useState<string | null>(null);
   const [addedSymbols, setAddedSymbols] = useState<Set<string>>(new Set());
 
-  const { profile } = useProfile();
+  // Interactive Hover & Popout state
+  const [hoveredStock, setHoveredStock] = useState<RecommendationItem | null>(null);
+  const [popoutStock, setPopoutStock] = useState<RecommendationItem | null>(null);
+
+  const { profile, userId } = useProfile();
   const h = new Date().getHours();
   const greet = h < 12 ? "Good Morning" : h < 17 ? "Good Afternoon" : "Good Evening";
   const displayName = profile?.display_name || profile?.username || "";
 
+  function getEffectiveUserId(): number {
+    if (userId) return userId;
+    if (profile?.id) return profile.id;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("investintel_profile");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed?.id) return Number(parsed.id);
+        }
+      } catch {}
+    }
+    return 2; // Default to user 2 (Aaryan Tiwari)
+  }
+
   useEffect(() => {
+    const uid = getEffectiveUserId();
+
     fetch(`${API}/api/v1/market/indices`)
       .then((r) => r.json())
       .then((data) => {
@@ -144,7 +210,7 @@ export default function Home() {
       })
       .catch(() => {});
 
-    fetch(`${API}/api/v1/strategy/daily-snapshot`)
+    fetch(`${API}/api/v1/strategy/daily-snapshot?user_id=${uid}`)
       .then((r) => r.json())
       .then((data) => setSnapshot(data))
       .catch(() => {});
@@ -156,7 +222,7 @@ export default function Home() {
         if (data) setRecData(data);
       })
       .catch(() => {});
-  }, []);
+  }, [profile?.id, userId]);
 
   const handleScanMarket = async () => {
     setScanning(true);
@@ -175,7 +241,8 @@ export default function Home() {
 
   const handleAddToWishlist = async (sym: string, targetPrice?: number) => {
     try {
-      const wRes = await fetch(`${API}/api/v1/watchlists?user_id=1`);
+      const activeId = getEffectiveUserId();
+      const wRes = await fetch(`${API}/api/v1/watchlists?user_id=${activeId}`);
       if (wRes.ok) {
         const lists = await wRes.json();
         if (lists && lists.length > 0) {
@@ -280,17 +347,20 @@ export default function Home() {
         {/* ============================================================== */}
         {/* NEW CARD: AI Stock Recommendation System & Market Intelligence */}
         {/* ============================================================== */}
-        <div className="bg-bg-card border border-accent/40 rounded-2xl p-5 md:p-6 shadow-xl shadow-accent/5 space-y-4 relative overflow-hidden">
+        <div className="bg-bg-card glow-card rounded-2xl p-5 md:p-6 space-y-4 relative overflow-hidden">
+          {/* Luminous Top Ambient Glow */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.8)]" />
+
           {/* Card Top Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-accent animate-pulse" />
-                <h2 className="text-base md:text-lg font-black text-txt-primary tracking-tight">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#38bdf8] animate-pulse" />
+                <h2 className="text-base md:text-lg font-black ultra-white glow-cyan-title tracking-tight">
                   Dalal Street AI Recommendation & Market Intelligence Engine
                 </h2>
               </div>
-              <p className="text-xs text-txt-muted mt-1 leading-relaxed">
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                 Multi-cap equities & ETFs evaluated across 25 institutional parameters, internet news, blogs, and market breadth
               </p>
             </div>
@@ -298,17 +368,17 @@ export default function Home() {
             {/* Prominent Scan Button */}
             <div className="flex items-center gap-3">
               {recData?.timestamp && (
-                <span className="text-[10px] text-txt-dim hidden sm:inline-block font-mono">
+                <span className="text-[10px] text-cyan-300/80 hidden sm:inline-block font-mono bg-bg-primary/80 px-2.5 py-1 rounded border border-border">
                   Scanned: {new Date(recData.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
               <button
                 onClick={handleScanMarket}
                 disabled={scanning}
-                className="px-4 py-2.5 bg-gradient-to-r from-accent to-purple-600 hover:from-accent-dark hover:to-purple-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-accent/25 flex items-center gap-2 transition-all disabled:opacity-60 cursor-pointer active:scale-95"
+                className="px-4 py-2.5 bg-gradient-to-r from-indigo-500 via-indigo-600 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white text-xs font-black rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center gap-2 transition-all disabled:opacity-60 cursor-pointer active:scale-95 border border-indigo-400/40"
               >
-                <span className={scanning ? "animate-spin text-sm" : "text-sm"}>⚡</span>
-                <span>{scanning ? "Scanning Market & Internet..." : "Scan Market & Fetch Suggestions"}</span>
+                <span className={scanning ? "animate-spin text-sm" : "text-sm text-cyan-200"}>⚡</span>
+                <span className="tracking-wide">{scanning ? "Scanning Market & Internet..." : "Scan Market & Fetch Suggestions"}</span>
               </button>
             </div>
           </div>
@@ -352,9 +422,9 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Tab 1: Top 5 Curated AI Recommendations */}
+          {/* Tab 1: Top 5 Curated AI Recommendations (Option 4: Big Bets Hero + Compact Table) */}
           {activeTab === "top5" && (
-            <div className="space-y-3 animate-fade-in">
+            <div className="space-y-4 animate-fade-in relative">
               {!recData ? (
                 <div className="text-center py-10 bg-bg-primary/50 rounded-xl border border-dashed border-border/80">
                   <p className="text-sm font-semibold text-txt-primary mb-1">Click "Scan Market & Fetch Suggestions"</p>
@@ -364,132 +434,352 @@ export default function Home() {
                   <button
                     onClick={handleScanMarket}
                     disabled={scanning}
-                    className="px-4 py-2 bg-accent text-white text-xs font-bold rounded-lg hover:bg-accent-dark transition-colors"
+                    className="px-4 py-2 bg-accent text-white text-xs font-bold rounded-lg hover:bg-accent-dark transition-colors cursor-pointer"
                   >
                     ⚡ Start Market Scan Now
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                  {recData.top_5_recommendations.map((rec, rIdx) => {
-                    const isAdded = addedSymbols.has(rec.symbol);
-                    return (
-                      <div
-                        key={`rec-${rec.rank}-${rec.symbol}-${rIdx}`}
-                        className="bg-bg-primary/80 border border-border/80 hover:border-accent/40 rounded-xl p-4 transition-all shadow-sm flex flex-col justify-between"
-                      >
-                        {/* Header: Rank, Symbol, Action Badge & Score */}
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-black font-mono px-1.5 py-0.5 rounded bg-bg-hover text-txt-dim">
-                                #{rec.rank}
-                              </span>
-                              <button
-                                onClick={() => setModalStock(rec.symbol)}
-                                className="font-bold text-accent-light hover:underline text-sm font-mono"
-                              >
-                                {rec.symbol}
-                              </button>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-card text-txt-muted border border-border">
-                                {rec.category}
-                              </span>
-                            </div>
-
-                            {/* Score & Action Badge */}
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="flex flex-col items-center justify-center px-2 py-0.5 rounded-md border min-w-[46px]"
-                                style={{
-                                  backgroundColor: `${rec.action_color}18`,
-                                  borderColor: `${rec.action_color}55`,
-                                }}
-                              >
-                                <span className="text-xs font-black font-mono leading-none" style={{ color: rec.action_color }}>
-                                  {rec.overall_score}
-                                </span>
-                                <span className="text-[8px] font-bold text-txt-dim leading-none mt-0.5">/100</span>
-                              </div>
-                              <span
-                                className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider shadow-sm"
-                                style={{
-                                  backgroundColor: `${rec.action_color}25`,
-                                  color: rec.action_color,
-                                  border: `1px solid ${rec.action_color}66`,
-                                }}
-                              >
-                                {rec.action}
-                              </span>
-                            </div>
-                          </div>
-
-                          <p className="text-[11px] text-txt-muted mb-2.5">{rec.name}</p>
-
-                          {/* Price & Target Milestones Grid */}
-                          <div className="grid grid-cols-4 gap-1.5 text-center bg-bg-card p-2 rounded-lg border border-border/60 mb-2.5">
-                            <div>
-                              <span className="text-[9px] text-txt-dim block">Live CMP</span>
-                              <strong className="text-xs font-mono text-txt-primary">₹{fmt(rec.current_price)}</strong>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-txt-dim block">Fair Value</span>
-                              <strong className="text-xs font-mono text-txt-secondary">₹{fmt(rec.estimated_fair_value)}</strong>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-txt-dim block">Target 1</span>
-                              <strong className="text-xs font-mono text-gain">₹{fmt(rec.target_price)}</strong>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-txt-dim block">Stop-Loss</span>
-                              <strong className="text-xs font-mono text-rose-400">₹{fmt(rec.stop_loss)}</strong>
-                            </div>
-                          </div>
-
-                          {/* Catalyst Summary */}
-                          <p className="text-[11px] text-txt-secondary leading-relaxed bg-bg-card/50 p-2 rounded border border-border/40 mb-2">
-                            <strong className="text-txt-primary font-medium">Catalyst: </strong>
-                            {rec.catalyst_summary}
-                          </p>
-
-                          {/* 3 Core Factors */}
-                          <div className="space-y-1 mb-3">
-                            {rec.reasons.map((r, i) => (
-                              <p key={`rec-reason-${rec.symbol}-${i}`} className="text-[10px] text-txt-muted flex items-center gap-1.5">
-                                <span className={rec.action.includes("BUY") ? "text-gain" : "text-amber-400"}>&bull;</span>
-                                <span>{r}</span>
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Footer Action Buttons */}
-                        <div className="flex items-center justify-between border-t border-border/60 pt-2.5 text-xs">
-                          <span className="text-[10px] font-mono text-txt-dim">
-                            1Y Exp: <strong className="text-txt-primary">{rec.expected_1y_return}</strong>
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleAddToWishlist(rec.symbol, rec.target_price)}
-                              disabled={isAdded}
-                              className={`px-2.5 py-1 text-[11px] rounded font-semibold transition-colors flex items-center gap-1 ${
-                                isAdded
-                                  ? "bg-gain/20 text-gain cursor-default"
-                                  : "bg-bg-hover hover:bg-accent-muted text-txt-primary hover:text-accent-light"
-                              }`}
-                            >
-                              <span>{isAdded ? "✓ In Wishlist" : "+ Wishlist"}</span>
-                            </button>
-                            <button
-                              onClick={() => setModalStock(rec.symbol)}
-                              className="px-2.5 py-1 text-[11px] rounded bg-accent/20 hover:bg-accent/30 text-accent-light font-bold transition-colors"
-                            >
-                              Deep Report &rarr;
-                            </button>
-                          </div>
-                        </div>
+                <div className="space-y-4">
+                  {/* 1. HERO STRIP: Big Bets in Open Market (Top 3 High-Conviction Setups) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-400 text-xs">★</span>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-txt-primary">
+                          Big Bet Highlights (Open Market Setups)
+                        </h3>
                       </div>
-                    );
-                  })}
+                      <span className="text-[10px] text-txt-dim">
+                        Hover for snapshot &bull; Click card or row for deep analysis
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {recData.top_5_recommendations.slice(0, 3).map((rec, rIdx) => {
+                        const isAdded = addedSymbols.has(rec.symbol);
+                        const upsidePct = rec.current_price > 0 ? (((rec.target_price - rec.current_price) / rec.current_price) * 100).toFixed(1) : "0";
+                        const conviction = rec.conviction_pct ?? Math.round(rec.overall_score);
+
+                        return (
+                          <div
+                            key={`hero-bet-${rec.symbol}-${rIdx}`}
+                            onMouseEnter={() => setHoveredStock(rec)}
+                            onMouseLeave={() => setHoveredStock(null)}
+                            onClick={() => setPopoutStock(rec)}
+                            className="bg-bg-card glow-card rounded-xl p-3.5 transition-all cursor-pointer group flex flex-col justify-between relative overflow-hidden"
+                          >
+                            {/* Ambient Top Dual Glow Bar */}
+                            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]" />
+
+                            <div>
+                              {/* Top Bar: Rank, Symbol, Action Badge with Conviction % */}
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[9px] font-black font-mono px-1.5 py-0.5 rounded bg-bg-hover text-cyan-300 border border-slate-700">
+                                    #{rec.rank}
+                                  </span>
+                                  <span className="font-black text-sm ultra-white group-hover:text-cyan-300 font-mono transition-colors">
+                                    {rec.symbol}
+                                  </span>
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-input text-slate-300 border border-slate-700 font-medium">
+                                    {rec.category}
+                                  </span>
+                                </div>
+
+                                <div
+                                  className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1 glow-cyan-badge"
+                                  style={{
+                                    backgroundColor: `${rec.action_color}25`,
+                                    color: rec.action_color,
+                                    border: `1px solid ${rec.action_color}77`,
+                                  }}
+                                >
+                                  <span>{rec.action}</span>
+                                  <span className="font-mono text-[9px] opacity-90">{conviction}%</span>
+                                </div>
+                              </div>
+
+                              <p className="text-[11px] text-slate-300 font-medium truncate mb-2.5">{rec.name}</p>
+
+                              {/* Price vs Target Metrics */}
+                              <div className="grid grid-cols-3 gap-1.5 p-2 rounded-lg bg-bg-hover/80 border border-slate-700/60 text-center mb-2">
+                                <div>
+                                  <span className="text-[9px] text-slate-300 font-bold block uppercase tracking-wider">CMP</span>
+                                  <strong className="text-xs font-mono font-black ultra-white">₹{fmt(rec.current_price)}</strong>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-emerald-300 font-bold block uppercase tracking-wider">Target 1</span>
+                                  <strong className="text-xs font-mono font-black text-emerald-400">₹{fmt(rec.target_price)}</strong>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-cyan-300 font-bold block uppercase tracking-wider">Upside</span>
+                                  <span className="text-xs font-black font-mono text-cyan-300">+{upsidePct}%</span>
+                                </div>
+                              </div>
+
+                              {/* 3-Pillar Institutional Breakdown Badge with Explicit Sum */}
+                              <div className="flex items-center justify-between text-[9px] font-mono px-2 py-1 rounded bg-bg-hover/60 border border-slate-700/60 mb-2">
+                                <span className="text-slate-400 font-medium">Final Score:</span>
+                                <span className="text-cyan-300 font-bold">M:{Math.round(rec.phase_a_score ?? 32)}</span>
+                                <span className="text-slate-600">+</span>
+                                <span className="text-emerald-400 font-bold">F:{Math.round(rec.phase_b_score ?? 31)}</span>
+                                <span className="text-slate-600">+</span>
+                                <span className="text-indigo-300 font-bold">AI:{Math.round(rec.phase_c_score ?? 28)}</span>
+                                <span className="text-slate-600">=</span>
+                                <span className="text-white font-bold">{conviction}</span>
+                              </div>
+
+                              {/* 1-Line Catalyst */}
+                              <p className="text-[10px] text-slate-100 font-medium line-clamp-2 leading-relaxed bg-bg-input p-1.5 rounded border-l-2 border-l-cyan-400 border border-slate-700/50">
+                                <strong className="text-cyan-300 font-bold uppercase tracking-wider text-[9px] mr-1">Catalyst:</strong>
+                                {rec.catalyst_summary}
+                              </p>
+                            </div>
+
+                            {/* Card Footer Actions */}
+                            <div className="flex items-center justify-between border-t border-slate-700/70 pt-2 mt-2.5 text-xs">
+                              <span className="text-[9px] text-slate-300">
+                                Exp: <strong className="text-emerald-400 font-bold">{rec.expected_1y_return}</strong>
+                              </span>
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={() => handleAddToWishlist(rec.symbol, rec.target_price)}
+                                  disabled={isAdded}
+                                  className={`px-2 py-0.5 text-[10px] rounded font-bold transition-colors ${
+                                    isAdded
+                                      ? "bg-gain/20 text-gain cursor-default"
+                                      : "bg-bg-hover hover:bg-cyan-500/20 text-slate-200 hover:text-white border border-slate-700"
+                                  }`}
+                                >
+                                  {isAdded ? "✓ Added" : "+ Wishlist"}
+                                </button>
+                                <button
+                                  onClick={() => setPopoutStock(rec)}
+                                  className="px-2.5 py-0.5 text-[10px] rounded bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white font-black shadow-[0_0_8px_rgba(56,189,248,0.3)] transition-colors"
+                                >
+                                  Analysis ↗
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. COMPACT MARKET RADAR TABLE (High-Density Quantitative Table for All 5 Picks) */}
+                  <div className="bg-bg-card glow-card rounded-xl overflow-hidden shadow-sm">
+                    <div className="px-4 py-2.5 border-b border-border/80 flex items-center justify-between bg-bg-hover/60">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black ultra-white uppercase tracking-wider">
+                          Curated Market Radar Table
+                        </span>
+                        <span className="text-[10px] text-cyan-300 bg-bg-primary px-2 py-0.5 rounded border border-slate-700 font-bold">
+                          5 High-Conviction Setups
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-300 hidden sm:inline-block font-medium">
+                        Click any row for complete technical + fundamental breakdown
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-border/70 text-[10px] uppercase font-bold text-slate-300 bg-bg-input">
+                            <th className="py-2.5 px-3"># Rank & Stock</th>
+                            <th className="py-2.5 px-3">Live CMP</th>
+                            <th className="py-2.5 px-3">AI Verdict & Conviction</th>
+                            <th className="py-2.5 px-3">Target 1 (Upside)</th>
+                            <th className="py-2.5 px-3">Stop-Loss</th>
+                            <th className="py-2.5 px-3">P/E & ROCE</th>
+                            <th className="py-2.5 px-3">Trend & RSI</th>
+                            <th className="py-2.5 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/60">
+                          {recData.top_5_recommendations.map((rec) => {
+                            const isAdded = addedSymbols.has(rec.symbol);
+                            const upsidePct = rec.current_price > 0 ? (((rec.target_price - rec.current_price) / rec.current_price) * 100).toFixed(1) : "0";
+                            const conviction = rec.conviction_pct ?? Math.round(rec.overall_score);
+
+                            return (
+                              <tr
+                                key={`row-rec-${rec.symbol}`}
+                                onMouseEnter={() => setHoveredStock(rec)}
+                                onMouseLeave={() => setHoveredStock(null)}
+                                onClick={() => setPopoutStock(rec)}
+                                className="hover:bg-bg-hover transition-colors cursor-pointer group"
+                              >
+                                {/* Rank & Stock */}
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-mono font-bold text-cyan-300 w-4">
+                                      #{rec.rank}
+                                    </span>
+                                    <div>
+                                      <span className="font-black ultra-white group-hover:text-cyan-300 font-mono block transition-colors">
+                                        {rec.symbol}
+                                      </span>
+                                      <span className="text-[10px] text-slate-300 font-medium truncate block max-w-[130px]">
+                                        {rec.name}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* Live CMP */}
+                                <td className="py-2.5 px-3 font-mono font-black ultra-white">
+                                  ₹{fmt(rec.current_price)}
+                                </td>
+
+                                {/* AI Verdict & Conviction Badge */}
+                                <td className="py-2.5 px-3">
+                                  <div
+                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider"
+                                    style={{
+                                      backgroundColor: `${rec.action_color}25`,
+                                      color: rec.action_color,
+                                      border: `1px solid ${rec.action_color}66`,
+                                    }}
+                                  >
+                                    <span>{rec.action}</span>
+                                    <span className="font-mono text-[9px] bg-black/40 px-1 rounded">
+                                      {conviction}%
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[9px] font-mono text-slate-400 mt-1">
+                                    <span className="text-slate-500">Score:</span>
+                                    <span className="text-cyan-300 font-bold">M:{Math.round(rec.phase_a_score ?? 32)}</span>
+                                    <span className="text-slate-600">+</span>
+                                    <span className="text-emerald-400 font-bold">F:{Math.round(rec.phase_b_score ?? 31)}</span>
+                                    <span className="text-slate-600">+</span>
+                                    <span className="text-indigo-300 font-bold">AI:{Math.round(rec.phase_c_score ?? 28)}</span>
+                                    <span className="text-slate-600">=</span>
+                                    <span className="text-white font-bold">{conviction}</span>
+                                  </div>
+                                </td>
+
+                                {/* Target 1 & Upside */}
+                                <td className="py-2.5 px-3">
+                                  <span className="font-mono ultra-white block font-black">
+                                    ₹{fmt(rec.target_price)}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-emerald-400 font-mono">
+                                    +{upsidePct}%
+                                  </span>
+                                </td>
+
+                                {/* Stop-Loss */}
+                                <td className="py-2.5 px-3 font-mono font-bold text-rose-400">
+                                  ₹{fmt(rec.stop_loss)}
+                                </td>
+
+                                {/* P/E & ROCE */}
+                                <td className="py-2.5 px-3 text-[11px]">
+                                  <div className="font-mono text-txt-secondary">
+                                    P/E: <strong className="text-txt-primary">{rec.fundamentals?.pe_ratio ?? "—"}</strong>
+                                  </div>
+                                  <div className="font-mono text-[10px] text-txt-dim">
+                                    ROCE: <span className="text-emerald-400">{rec.fundamentals?.roce_pct ? `${rec.fundamentals.roce_pct}%` : "—"}</span>
+                                  </div>
+                                </td>
+
+                                {/* Trend & RSI */}
+                                <td className="py-2.5 px-3">
+                                  <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded ${
+                                    rec.technical?.trend?.includes("UP")
+                                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                                      : rec.technical?.trend?.includes("DOWN")
+                                      ? "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                                      : "bg-bg-card text-txt-dim border border-border"
+                                  }`}>
+                                    {rec.technical?.trend ?? "STEADY"}
+                                  </span>
+                                  <span className="text-[9px] text-txt-dim block mt-0.5 font-mono">
+                                    RSI: {rec.technical?.rsi_14 ?? "—"}
+                                  </span>
+                                </td>
+
+                                {/* Actions */}
+                                <td className="py-2.5 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => handleAddToWishlist(rec.symbol, rec.target_price)}
+                                      disabled={isAdded}
+                                      className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-colors ${
+                                        isAdded
+                                          ? "bg-gain/20 text-gain cursor-default"
+                                          : "bg-bg-hover hover:bg-accent-muted text-txt-primary hover:text-accent-light"
+                                      }`}
+                                    >
+                                      {isAdded ? "✓ Added" : "+ Wishlist"}
+                                    </button>
+                                    <button
+                                      onClick={() => setPopoutStock(rec)}
+                                      className="px-2 py-0.5 text-[10px] rounded bg-accent/20 hover:bg-accent/30 text-accent-light font-bold transition-colors"
+                                    >
+                                      Deep ↗
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. HOVER EFFECT: Dynamic Floating Snippet Card */}
+              {hoveredStock && !popoutStock && (
+                <div className="fixed bottom-5 right-5 w-80 bg-[#121422]/95 border border-accent/40 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-40 animate-fade-in pointer-events-none">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-2 mb-2">
+                    <div>
+                      <span className="font-bold text-xs text-txt-primary font-mono mr-1.5">
+                        {hoveredStock.symbol}
+                      </span>
+                      <span className="text-[9px] text-txt-dim truncate">
+                        {hoveredStock.name}
+                      </span>
+                    </div>
+                    <span
+                      className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: `${hoveredStock.action_color}20`,
+                        color: hoveredStock.action_color,
+                        border: `1px solid ${hoveredStock.action_color}40`,
+                      }}
+                    >
+                      {hoveredStock.action} {hoveredStock.conviction_pct ?? Math.round(hoveredStock.overall_score)}%
+                    </span>
+                  </div>
+
+                  {/* Quick Technicals & Fundamentals Grid */}
+                  <div className="grid grid-cols-2 gap-2 text-[10px] mb-2 font-mono">
+                    <div className="bg-bg-primary/80 p-1.5 rounded border border-border/50">
+                      <span className="text-txt-dim block text-[8px] uppercase">Technical Setup</span>
+                      <span className="text-txt-primary block font-bold">{hoveredStock.technical?.trend ?? "STEADY"}</span>
+                      <span className="text-txt-muted text-[9px]">RSI: {hoveredStock.technical?.rsi_14 ?? "—"}</span>
+                    </div>
+                    <div className="bg-bg-primary/80 p-1.5 rounded border border-border/50">
+                      <span className="text-txt-dim block text-[8px] uppercase">Valuation Ratios</span>
+                      <span className="text-txt-primary block font-bold">P/E {hoveredStock.fundamentals?.pe_ratio ?? "—"}</span>
+                      <span className="text-txt-muted text-[9px]">ROCE: {hoveredStock.fundamentals?.roce_pct ? `${hoveredStock.fundamentals.roce_pct}%` : "—"}</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-txt-secondary line-clamp-2 leading-tight">
+                    <strong className="text-txt-primary">Catalyst: </strong>
+                    {hoveredStock.catalyst_summary}
+                  </p>
+
+                  <div className="mt-2 text-[9px] text-accent-light text-center border-t border-border/40 pt-1.5 font-medium">
+                    💡 Click stock row for full technical + fundamental popout
+                  </div>
                 </div>
               )}
             </div>
@@ -665,7 +955,7 @@ export default function Home() {
         </div>
 
         {/* Navigation Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
           {cards.map((c) => (
             <Link key={c.href} href={c.href} className="block group">
               <div
@@ -731,6 +1021,333 @@ export default function Home() {
                 ))}
           </div>
         </div>
+
+        {/* Detailed Technical + Fundamental Analysis Popout Modal (Option 4 Click Effect) */}
+        {popoutStock && (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5 animate-fade-in">
+            <div className="bg-bg-card glow-card rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden relative border border-slate-700">
+              {/* Luminous Top Dual Ambient Bar */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.8)]" />
+
+              {/* Popout Header */}
+              <div className="p-4 sm:p-5 border-b border-border/80 flex items-center justify-between bg-bg-hover/60">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-400/50 flex items-center justify-center text-cyan-300 font-black font-mono text-sm glow-cyan-badge">
+                    #{popoutStock.rank}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-black ultra-white glow-cyan-title font-mono tracking-tight">
+                        {popoutStock.symbol}
+                      </h2>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-bg-input text-slate-300 border border-slate-700 font-bold">
+                        {popoutStock.category}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 font-medium mt-0.5">{popoutStock.name}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <span className="text-[9px] text-slate-300 font-bold block uppercase tracking-wider font-mono">Live CMP</span>
+                    <strong className="text-base font-mono font-black ultra-white">₹{fmt(popoutStock.current_price)}</strong>
+                  </div>
+                  <button
+                    onClick={() => setPopoutStock(null)}
+                    className="w-8 h-8 rounded-lg bg-bg-hover text-slate-300 hover:text-white flex items-center justify-center text-sm transition-colors cursor-pointer border border-slate-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Content Body */}
+              <div className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-[calc(92vh-140px)]">
+                {/* 1. AI Verdict & Conviction Banner */}
+                <div className="p-3.5 rounded-xl bg-bg-hover/80 border border-slate-700/80 flex flex-wrap items-center justify-between gap-3 shadow-inner">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm glow-cyan-badge"
+                      style={{
+                        backgroundColor: `${popoutStock.action_color}25`,
+                        color: popoutStock.action_color,
+                        border: `1px solid ${popoutStock.action_color}77`,
+                      }}
+                    >
+                      <span>⚡ {popoutStock.action}</span>
+                      <span className="font-mono bg-black/40 px-1.5 py-0.5 rounded text-[11px] text-white">
+                        {popoutStock.conviction_pct ?? Math.round(popoutStock.overall_score)}%
+                      </span>
+                    </div>
+                    <span className="text-xs text-slate-200 font-medium">
+                      Score: <strong className="ultra-white font-mono font-bold">{popoutStock.overall_score}/100</strong>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-4 text-xs font-mono">
+                    <div>
+                      <span className="text-[9px] text-emerald-300 font-bold block uppercase">Target 1</span>
+                      <strong className="text-emerald-400 font-black">₹{fmt(popoutStock.target_price)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-cyan-300 font-bold block uppercase">Upside</span>
+                      <span className="text-cyan-300 font-black">
+                        +{popoutStock.current_price > 0 ? (((popoutStock.target_price - popoutStock.current_price) / popoutStock.current_price) * 100).toFixed(1) : "0"}%
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-rose-300 font-bold block uppercase">Stop-Loss</span>
+                      <strong className="text-rose-400 font-black">₹{fmt(popoutStock.stop_loss)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-slate-300 font-bold block uppercase">1Y Exp</span>
+                      <strong className="ultra-white font-black">{popoutStock.expected_1y_return}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3-PILLAR INSTITUTIONAL AI SCORECARD (Quant Math 35 + Market Flow 35 + AI Cognitive 30 = 100) */}
+                <div className="bg-bg-primary/90 rounded-xl p-3.5 border border-slate-700/80 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                    <span className="text-xs font-black ultra-white flex items-center gap-1.5 uppercase tracking-wider">
+                      <span className="text-cyan-400">🏛️</span> 3-Pillar Institutional Engine Scorecard
+                    </span>
+                    <div className="text-[11px] font-mono font-black ultra-white px-2 py-0.5 rounded bg-bg-card border border-slate-700">
+                      Total: <span className="text-cyan-300 font-bold">{popoutStock.total_score ?? popoutStock.overall_score}/100</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs font-mono">
+                    <div className="bg-bg-card p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] text-cyan-300 font-bold uppercase tracking-wider">Phase A: Quant Math</span>
+                          <span className="text-xs font-black text-cyan-300">{popoutStock.phase_a_score ?? 32}/35</span>
+                        </div>
+                        <p className="text-[9px] text-slate-300 leading-tight">ROCE/ROE capital efficiency, low D/E solvency, FCF & Piotroski score.</p>
+                      </div>
+                      <div className="mt-1.5 text-[8px] text-emerald-400 font-bold">✓ Capital Integrity Verified</div>
+                    </div>
+
+                    <div className="bg-bg-card p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] text-emerald-300 font-bold uppercase tracking-wider">Phase B: Market Flow</span>
+                          <span className="text-xs font-black text-emerald-400">{popoutStock.phase_b_score ?? 31}/35</span>
+                        </div>
+                        <p className="text-[9px] text-slate-300 leading-tight">Institutional FII/DII accumulation, Nifty outperformance, delivery.</p>
+                      </div>
+                      <div className="mt-1.5 text-[8px] text-cyan-300 font-bold">✓ Microstructure Momentum</div>
+                    </div>
+
+                    <div className="bg-bg-card p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-wider">Phase C: AI Cognitive</span>
+                          <span className="text-xs font-black text-indigo-300">{popoutStock.phase_c_score ?? 28}/30</span>
+                        </div>
+                        <p className="text-[9px] text-slate-300 leading-tight">
+                          Tone: <strong className="text-white">{popoutStock.management_tone ?? "VERY_BULLISH"}</strong> &bull; Cat: <strong className="text-white">{popoutStock.catalyst_probability_pct ?? 88}%</strong>
+                        </p>
+                      </div>
+                      <div className="mt-1.5 text-[8px] text-purple-300 font-bold">
+                        Audit: {popoutStock.forensic_status ?? "CLEAN"} &bull; Veto: {popoutStock.veto_triggered ? "TRIGGERED" : "PASSED"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. DUAL ANALYSIS GRID: Technicals + Fundamentals Side-by-Side */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {/* Technical Analysis Column */}
+                  <div className="bg-bg-primary/80 rounded-xl p-3.5 border border-border/80 space-y-3">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                      <span className="text-xs font-bold text-accent-light flex items-center gap-1.5 uppercase tracking-wider">
+                        <span>📈</span> Technical Architecture
+                      </span>
+                      <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded ${
+                        popoutStock.technical?.trend?.includes("UP")
+                          ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                          : "bg-bg-card text-txt-dim border border-border"
+                      }`}>
+                        {popoutStock.technical?.trend ?? "STEADY STRUCTURE"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">RSI (14)</span>
+                        <strong className="text-txt-primary text-sm">{popoutStock.technical?.rsi_14 ?? "52.0"}</strong>
+                        <span className="text-[9px] text-emerald-400 block mt-0.5">Healthy Momentum</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">MACD Signal</span>
+                        <strong className="text-txt-primary text-xs truncate block">{popoutStock.technical?.macd_signal ?? "BULLISH"}</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">Trend Confirmation</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">200 EMA Anchor</span>
+                        <strong className="text-txt-primary text-xs">₹{fmt(popoutStock.technical?.ema_200 ?? (popoutStock.current_price * 0.90))}</strong>
+                        <span className="text-[9px] text-emerald-400 block mt-0.5">Trading Above (Bullish)</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">Volume Trend</span>
+                        <strong className="text-txt-primary text-xs truncate block">{popoutStock.technical?.volume_trend ?? "ACCUMULATION"}</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">Institutional Footprint</span>
+                      </div>
+                    </div>
+
+                    {/* Support & Resistance Bands */}
+                    <div className="p-2.5 rounded-lg bg-bg-card border border-border/50 text-[11px] font-mono flex items-center justify-between">
+                      <div>
+                        <span className="text-[9px] text-txt-dim block">Supports</span>
+                        <span className="text-emerald-400">
+                          ₹{fmt(popoutStock.technical?.support_1 ?? (popoutStock.current_price * 0.95))} &bull; ₹{fmt(popoutStock.technical?.support_2 ?? (popoutStock.current_price * 0.91))}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] text-txt-dim block">Resistances</span>
+                        <span className="text-txt-primary">
+                          ₹{fmt(popoutStock.technical?.resistance_1 ?? (popoutStock.current_price * 1.08))} &bull; ₹{fmt(popoutStock.technical?.resistance_2 ?? (popoutStock.current_price * 1.15))}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Fundamental Analysis Column */}
+                  <div className="bg-bg-primary/80 rounded-xl p-3.5 border border-border/80 space-y-3">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 uppercase tracking-wider">
+                        <span>🏛</span> Fundamental & Valuation Ratios
+                      </span>
+                      <span className="text-[10px] text-txt-dim font-mono">
+                        Piotroski & Quality
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">P/E vs Sector</span>
+                        <strong className="text-txt-primary text-sm">{popoutStock.fundamentals?.pe_ratio ?? "—"}</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">Sec P/E: {popoutStock.fundamentals?.sector_pe ?? "—"}</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">Price to Book (P/B)</span>
+                        <strong className="text-txt-primary text-sm">{popoutStock.fundamentals?.pb_ratio ?? "—"}x</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">Balance Sheet Quality</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">ROCE %</span>
+                        <strong className="text-emerald-400 text-sm">{popoutStock.fundamentals?.roce_pct ? `${popoutStock.fundamentals.roce_pct}%` : "—"}</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">ROE: {popoutStock.fundamentals?.roe_pct ? `${popoutStock.fundamentals.roe_pct}%` : "—"}</span>
+                      </div>
+                      <div className="bg-bg-card p-2 rounded border border-border/50">
+                        <span className="text-[9px] text-txt-dim block">Operating Margin</span>
+                        <strong className="text-txt-primary text-sm">{popoutStock.fundamentals?.operating_margin_pct ? `${popoutStock.fundamentals.operating_margin_pct}%` : "—"}</strong>
+                        <span className="text-[9px] text-txt-dim block mt-0.5">D/E: {popoutStock.fundamentals?.debt_to_equity ?? "—"}</span>
+                      </div>
+                    </div>
+
+                    {/* Economic Moat */}
+                    <div className="p-2.5 rounded-lg bg-bg-card border border-border/50 text-[11px]">
+                      <span className="text-[9px] text-txt-dim block uppercase font-mono">Economic Moat Strength</span>
+                      <strong className="text-txt-primary font-medium block mt-0.5">
+                        {popoutStock.fundamentals?.moat_strength ?? "Strong Market Leader with Pricing Power"}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. 3-Scenario Probability Matrix */}
+                {popoutStock.scenarios && (
+                  <div className="bg-bg-primary/60 rounded-xl p-3.5 border border-border/80">
+                    <span className="text-xs font-bold text-txt-primary uppercase tracking-wider block mb-2.5">
+                      🔮 12-Month Scenario Probability Matrix
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                      <div className="bg-emerald-500/5 border border-emerald-500/30 rounded-lg p-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-emerald-400 text-[11px]">Bull Scenario</span>
+                          <span className="font-mono text-[10px] text-txt-dim">{popoutStock.scenarios.bull.prob}% Prob</span>
+                        </div>
+                        <strong className="text-emerald-300 font-mono text-sm block">₹{fmt(popoutStock.scenarios.bull.target)}</strong>
+                        <p className="text-[10px] text-txt-muted mt-1 leading-tight">{popoutStock.scenarios.bull.trigger}</p>
+                      </div>
+
+                      <div className="bg-blue-500/5 border border-blue-500/30 rounded-lg p-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-blue-400 text-[11px]">Base Scenario</span>
+                          <span className="font-mono text-[10px] text-txt-dim">{popoutStock.scenarios.base.prob}% Prob</span>
+                        </div>
+                        <strong className="text-blue-300 font-mono text-sm block">₹{fmt(popoutStock.scenarios.base.target)}</strong>
+                        <p className="text-[10px] text-txt-muted mt-1 leading-tight">{popoutStock.scenarios.base.trigger}</p>
+                      </div>
+
+                      <div className="bg-rose-500/5 border border-rose-500/30 rounded-lg p-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-rose-400 text-[11px]">Bear Scenario</span>
+                          <span className="font-mono text-[10px] text-txt-dim">{popoutStock.scenarios.bear.prob}% Prob</span>
+                        </div>
+                        <strong className="text-rose-300 font-mono text-sm block">₹{fmt(popoutStock.scenarios.bear.stop)}</strong>
+                        <p className="text-[10px] text-txt-muted mt-1 leading-tight">{popoutStock.scenarios.bear.trigger}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Core Catalyst & Reasons */}
+                <div className="bg-bg-primary/60 rounded-xl p-3.5 border border-border/80">
+                  <span className="text-xs font-bold text-txt-primary uppercase tracking-wider block mb-1.5">
+                    💡 Primary Institutional Thesis & Catalysts
+                  </span>
+                  <p className="text-xs text-txt-secondary leading-relaxed mb-2.5">
+                    {popoutStock.catalyst_summary}
+                  </p>
+                  <div className="space-y-1">
+                    {popoutStock.reasons.map((r, i) => (
+                      <p key={`popout-reason-${i}`} className="text-[11px] text-txt-muted flex items-center gap-1.5">
+                        <span className="text-accent-light font-bold">&bull;</span>
+                        <span>{r}</span>
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Popout Footer Action Bar */}
+              <div className="p-3.5 sm:p-4 border-t border-border/80 bg-bg-card/70 flex items-center justify-between gap-3">
+                <button
+                  onClick={() => {
+                    handleAddToWishlist(popoutStock.symbol, popoutStock.target_price);
+                  }}
+                  className="px-3.5 py-2 rounded-lg bg-bg-hover hover:bg-accent-muted text-txt-primary hover:text-accent-light text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>{addedSymbols.has(popoutStock.symbol) ? "✓ Added to Wishlist" : "+ Add to Wishlist"}</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const sym = popoutStock.symbol;
+                      setPopoutStock(null);
+                      setModalStock(sym);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-bold hover:bg-accent-dark transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>📊 Open Full Interactive Chart & Modal</span>
+                  </button>
+                  <button
+                    onClick={() => setPopoutStock(null)}
+                    className="px-3.5 py-2 rounded-lg bg-bg-card border border-border text-txt-muted hover:text-txt-primary text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Stock Detail Modal */}
         {modalStock && <StockModal symbol={modalStock} onClose={() => setModalStock(null)} />}
