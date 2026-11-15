@@ -1,7 +1,9 @@
 import asyncio
 import os
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
+import httpx
 
 from sqlalchemy.orm import Session
 
@@ -163,21 +165,22 @@ def get_cached_price(db: Session, symbol: str) -> Decimal | None:
 
 
 def get_live_or_cached_price(db: Session, symbol: str) -> Decimal:
-    """Fetch cached price or fast live quote if not yet cached, updating cache transparently."""
+    """Fetch cached price or run 4-tier waterfall if not yet cached, updating cache transparently."""
     sym = resolve_symbol(symbol)
     p = get_cached_price(db, sym)
-    if p and p > Decimal("0"):
+    # If price exists, is positive, and is not a corrupted flat dummy (e.g. 1000.0 or 100.0), return cached
+    if p and p > Decimal("0") and p != Decimal("1000.00") and p != Decimal("1000.0"):
         return p
-    # Try fetching fast live quote
+    # Try fetching 4-tier waterfall quote
     try:
-        q = _fetch_quote_fast(sym)
+        q = _fetch_quote_waterfall(sym)
         if q and q.get("price") and q["price"] > 0:
-            update_stock_market_price(db, sym, q["price"], q.get("change_pct"))
+            update_stock_market_price(db, sym, q["price"], q.get("change_pct"), source=q.get("source", "waterfall"))
             return Decimal(str(round(q["price"], 2)))
     except Exception:
         pass
     inst = db.query(Instrument).filter(Instrument.symbol == sym).first()
-    if inst and inst.market_price and inst.market_price.price:
+    if inst and inst.market_price and inst.market_price.price and inst.market_price.price != Decimal("1000.0"):
         return inst.market_price.price
     return Decimal("100.00")
 
@@ -218,7 +221,76 @@ def get_last_refresh_time() -> datetime | None:
     return _last_refresh_time
 
 
+def _fetch_quote_google_finance(sym: str) -> dict | None:
+    """Tier 1: Google Finance live quote scraper for Indian equities (NSE & BOM)."""
+    clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    old_http = os.environ.pop("http_proxy", None)
+    old_https = os.environ.pop("https_proxy", None)
+    try:
+        with httpx.Client(timeout=3.5, follow_redirects=True, headers=headers) as client:
+            for exch in ["NSE", "BOM"]:
+                url = f"https://www.google.com/finance/quote/{clean}:{exch}"
+                try:
+                    resp = client.get(url)
+                    if resp.status_code != 200:
+                        continue
+                    text = resp.text
+                    patterns = [
+                        r'data-last-price="([0-9,.]+)"',
+                        r'class="YMlKec fxKbKc"[^>]*>[\s₹]*([0-9,]+\.?[0-9]*)',
+                        r'class="YMlKec fxKbKc">\s*₹?\s*([0-9,]+\.[0-9]+)',
+                        r'₹\s*([0-9,]+\.[0-9]{1,2})\s*</div>',
+                        r'>₹([0-9,]+\.[0-9]+)<',
+                        r'data-currency-price="([0-9,.]+)"',
+                    ]
+                    price_val = None
+                    for pattern in patterns:
+                        m = re.search(pattern, text)
+                        if m:
+                            try:
+                                v = float(m.group(1).replace(",", ""))
+                                if v > 0:
+                                    price_val = v
+                                    break
+                            except ValueError:
+                                continue
+                    if price_val:
+                        chg_pct = None
+                        m_pct = re.search(r'class="[a-zA-Z0-9 ]*JwB6be[^"]*"[^>]*>[\s\n]*([+-]?[0-9.]+%)', text)
+                        if m_pct:
+                            try:
+                                chg_pct = float(m_pct.group(1).replace("%", "").replace("+", "").strip())
+                            except ValueError:
+                                pass
+                        return {
+                            "price": Decimal(str(round(price_val, 4))),
+                            "change": None,
+                            "change_pct": chg_pct or 0.0,
+                            "open": None,
+                            "high": None,
+                            "low": None,
+                            "close": Decimal(str(round(price_val, 4))),
+                            "prev_close": None,
+                            "source": "google_finance",
+                            "freshness": "LIVE",
+                        }
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    finally:
+        if old_http: os.environ["http_proxy"] = old_http
+        if old_https: os.environ["https_proxy"] = old_https
+    return None
+
+
 def _fetch_quote_fast(sym: str) -> dict | None:
+    """Tier 2: Yahoo Finance (.NS/.BO) fast quote via yfinance."""
     import yfinance as yf
     clean = sym.strip().upper().replace(".NS", "").replace(".BO", "")
     for suffix in [".NS", ".BO"]:
@@ -247,6 +319,103 @@ def _fetch_quote_fast(sym: str) -> dict | None:
                 }
         except Exception:
             continue
+    return None
+
+
+def _fetch_quote_screener(sym: str) -> dict | None:
+    """Tier 3: Screener.in Indian fundamentals & live/closing CMP."""
+    try:
+        from ..providers.screener_provider import ScreenerFundamentalsProvider
+        sp = ScreenerFundamentalsProvider()
+        clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
+        data = sp.get_fundamentals(clean)
+        if data and data.get("available") and data.get("ratios"):
+            cp = data["ratios"].get("Current Price")
+            if cp and isinstance(cp, (int, float)) and cp > 0:
+                return {
+                    "price": Decimal(str(round(float(cp), 4))),
+                    "change": None,
+                    "change_pct": 0.0,
+                    "open": None,
+                    "high": None,
+                    "low": None,
+                    "close": Decimal(str(round(float(cp), 4))),
+                    "prev_close": None,
+                    "source": "screener",
+                    "freshness": "SCRAPED",
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_quote_nse_india(sym: str) -> dict | None:
+    """Tier 4: NSE India official exchange quote API."""
+    clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json, text/html",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    old_http = os.environ.pop("http_proxy", None)
+    old_https = os.environ.pop("https_proxy", None)
+    try:
+        with httpx.Client(timeout=4.0, follow_redirects=True, headers=headers) as client:
+            client.get("https://www.nseindia.com", headers={"Accept": "text/html"})
+            resp = client.get(f"https://www.nseindia.com/api/quote-equity?symbol={clean}", headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                p_data = resp.json().get("priceInfo", {})
+                last_p = p_data.get("lastPrice") or p_data.get("close")
+                if last_p and float(last_p) > 0:
+                    pct = p_data.get("pChange", 0.0)
+                    return {
+                        "price": Decimal(str(round(float(last_p), 4))),
+                        "change": Decimal(str(round(float(p_data.get("change", 0.0)), 4))) if p_data.get("change") else None,
+                        "change_pct": float(pct) if pct is not None else 0.0,
+                        "open": None,
+                        "high": None,
+                        "low": None,
+                        "close": Decimal(str(round(float(last_p), 4))),
+                        "prev_close": None,
+                        "source": "nse_india",
+                        "freshness": "OFFICIAL_EXCHANGE",
+                    }
+    except Exception:
+        pass
+    finally:
+        if old_http: os.environ["http_proxy"] = old_http
+        if old_https: os.environ["https_proxy"] = old_https
+    return None
+
+
+def _fetch_quote_waterfall(sym: str) -> dict | None:
+    """
+    4-Tier Resilient Waterfall Quoting Engine:
+    Tier 1: Google Finance (Fast Live NSE/BSE Feed)
+    Tier 2: Yahoo Finance (yfinance .NS/.BO fast_info)
+    Tier 3: Screener.in (Authentic Indian Fundamentals & CMP)
+    Tier 4: NSE India Official Exchange API (lastPrice)
+    """
+    # Tier 1: Google Finance
+    q = _fetch_quote_google_finance(sym)
+    if q and q.get("price") and q["price"] > 0:
+        return q
+
+    # Tier 2: Yahoo Finance
+    q = _fetch_quote_fast(sym)
+    if q and q.get("price") and q["price"] > 0:
+        return q
+
+    # Tier 3: Screener.in
+    q = _fetch_quote_screener(sym)
+    if q and q.get("price") and q["price"] > 0:
+        return q
+
+    # Tier 4: NSE India Official API
+    q = _fetch_quote_nse_india(sym)
+    if q and q.get("price") and q["price"] > 0:
+        return q
+
     return None
 
 
@@ -315,20 +484,23 @@ async def refresh_all_prices(db: Session) -> dict:
         _last_refresh_time = datetime.now(UTC)
         return {"refreshed": 0, "total": 0, "symbols": [], "timestamp": _last_refresh_time.isoformat()}
 
-    # 1. Parallel Fast Fetch via worker threads
-    async def fetch_one(sym: str):
-        try:
-            return sym, await asyncio.wait_for(asyncio.to_thread(_fetch_quote_fast, sym), timeout=3.5)
-        except Exception:
-            return sym, None
+    # Resilient 4-Tier Waterfall Quoting Queue with Concurrency Pool of 8
+    sem = asyncio.Semaphore(8)
 
-    fast_results = await asyncio.gather(*[fetch_one(s) for s in symbols])
+    async def fetch_one(sym: str):
+        async with sem:
+            try:
+                return sym, await asyncio.wait_for(asyncio.to_thread(_fetch_quote_waterfall, sym), timeout=8.0)
+            except Exception:
+                return sym, None
+
+    waterfall_results = await asyncio.gather(*[fetch_one(s) for s in symbols])
 
     refreshed: list[str] = []
     missing: list[str] = []
 
-    for sym, data in fast_results:
-        if data:
+    for sym, data in waterfall_results:
+        if data and data.get("price") and data["price"] > 0:
             inst = get_or_create_instrument(db, sym)
             _save_quote_to_db(db, inst, data)
             refreshed.append(sym)
@@ -341,39 +513,6 @@ async def refresh_all_prices(db: Session) -> dict:
                     refreshed.append("TATAMOTORS")
         else:
             missing.append(sym)
-
-    # 2. Quick parallel fallback via Google Finance for any missing symbols
-    if missing:
-        from ..providers.google_finance_provider import GoogleFinanceProvider
-        gf = GoogleFinanceProvider()
-
-        async def fetch_gf(s: str):
-            try:
-                g_q = await asyncio.wait_for(gf.quote(s), timeout=2.5)
-                return s, g_q
-            except Exception:
-                return s, None
-
-        gf_results = await asyncio.gather(*[fetch_gf(s) for s in missing])
-        still_missing = []
-        for sym, g_quote in gf_results:
-            if g_quote and g_quote.price:
-                inst = get_or_create_instrument(db, sym)
-                data = {
-                    "price": g_quote.price,
-                    "change": None,
-                    "change_pct": 0.0,
-                    "close": g_quote.price,
-                    "source": "google_finance",
-                    "freshness": "SCRAPED",
-                }
-                _save_quote_to_db(db, inst, data)
-                refreshed.append(sym)
-            else:
-                still_missing.append(sym)
-
-        # Clean finish without slow blocking LLM fallback on general refresh
-        pass
 
     _last_refresh_time = datetime.now(UTC)
     return {
