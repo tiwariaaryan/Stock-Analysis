@@ -394,14 +394,10 @@ export default function AIIntelligencePage() {
                   <span>{data.excluded_count} stocks excluded (Portfolio/Wishlist)</span>
                 </span>
               )}
-              <button
-                onClick={() => loadDiscoveryData(true)}
-                disabled={scanning || loading}
-                className="px-4 py-2 bg-gradient-to-r from-indigo-500 via-indigo-600 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white text-xs font-black rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center gap-2 transition-all disabled:opacity-60 cursor-pointer active:scale-95 shrink-0 border border-indigo-400/40"
-              >
-                <span className={scanning ? "animate-spin text-cyan-200" : "text-cyan-200"}>⚡</span>
-                <span className="tracking-wide">{scanning ? "Scanning Market..." : "Rescan Market"}</span>
-              </button>
+              <span className="text-[11px] text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span>Multi-Horizon Quant Engine Active</span>
+              </span>
             </div>
           </div>
           <div className="h-[2px] w-full glow-headline-bar mt-3 rounded-full" />

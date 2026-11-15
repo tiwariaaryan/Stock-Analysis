@@ -172,6 +172,8 @@ export default function Home() {
   const [snapshot, setSnapshot] = useState<DailySnapshot | null>(null);
   const [recData, setRecData] = useState<MarketScanPayload | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [syncingPrices, setSyncingPrices] = useState(false);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"top5" | "movers" | "sentiment">("top5");
   const [modalStock, setModalStock] = useState<string | null>(null);
   const [addedSymbols, setAddedSymbols] = useState<Set<string>>(new Set());
@@ -223,6 +225,26 @@ export default function Home() {
       })
       .catch(() => {});
   }, [profile?.id, userId]);
+
+  const handleSyncAllPrices = async () => {
+    setSyncingPrices(true);
+    setSyncToast(null);
+    try {
+      const res = await fetch(`${API}/api/v1/market/refresh-all`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncToast(`✅ Successfully synced ${data.refreshed}/${data.total} stock prices across Portfolio, Wishlist & Paper Arena!`);
+        fetch(`${API}/api/v1/market/indices`).then((r) => r.ok && r.json()).then((d) => d && setIndices(d)).catch(() => {});
+      } else {
+        setSyncToast("⚠️ Price sync failed — please try again.");
+      }
+    } catch {
+      setSyncToast("⚠️ Could not reach server for price sync.");
+    } finally {
+      setSyncingPrices(false);
+      setTimeout(() => setSyncToast(null), 6000);
+    }
+  };
 
   const handleScanMarket = async () => {
     setScanning(true);
@@ -365,23 +387,57 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Prominent Scan Button */}
-            <div className="flex items-center gap-3">
+            {/* Master 2-Button Control Center */}
+            <div className="flex flex-wrap items-center gap-3">
               {recData?.timestamp && (
-                <span className="text-[10px] text-cyan-300/80 hidden sm:inline-block font-mono bg-bg-primary/80 px-2.5 py-1 rounded border border-border">
+                <span className="text-[10px] text-cyan-300/80 hidden lg:inline-block font-mono bg-bg-primary/80 px-2.5 py-1 rounded border border-border">
                   Scanned: {new Date(recData.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
+
+              {/* Master Button 1: Sync All Live Prices */}
+              <button
+                onClick={handleSyncAllPrices}
+                disabled={syncingPrices}
+                className={`px-4 py-2.5 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 transition-all cursor-pointer active:scale-95 border ${
+                  syncingPrices
+                    ? "bg-cyan-600/40 border-cyan-400 text-cyan-200 animate-pulse shadow-cyan-950/40"
+                    : "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white border-cyan-400/40 shadow-cyan-950/30"
+                }`}
+                title="Fetch latest live market prices for all stocks across your Portfolios, Wishlists, and Paper Arena sandboxes"
+              >
+                <span className={`text-sm ${syncingPrices ? "animate-spin" : ""}`}>🔄</span>
+                <span className="tracking-wide">
+                  {syncingPrices ? "Syncing All Live Prices..." : "Sync All Live Prices"}
+                </span>
+              </button>
+
+              {/* Master Button 2: Run AI Market Research */}
               <button
                 onClick={handleScanMarket}
                 disabled={scanning}
-                className="px-4 py-2.5 bg-gradient-to-r from-indigo-500 via-indigo-600 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white text-xs font-black rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center gap-2 transition-all disabled:opacity-60 cursor-pointer active:scale-95 border border-indigo-400/40"
+                className={`px-4 py-2.5 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 transition-all cursor-pointer active:scale-95 border ${
+                  scanning
+                    ? "bg-indigo-600/40 border-indigo-400 text-indigo-200 animate-pulse shadow-indigo-950/40"
+                    : "bg-gradient-to-r from-indigo-500 via-indigo-600 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white border-indigo-400/40 shadow-[0_0_15px_rgba(99,102,241,0.4)]"
+                }`}
+                title="Run comprehensive AI research: market breadth, news sentiment, top movers, and top 5 high-conviction trade setups"
               >
-                <span className={scanning ? "animate-spin text-sm" : "text-sm text-cyan-200"}>⚡</span>
-                <span className="tracking-wide">{scanning ? "Scanning Market & Internet..." : "Scan Market & Fetch Suggestions"}</span>
+                <span className={`text-sm ${scanning ? "animate-spin text-cyan-200" : "text-cyan-200"}`}>⚡</span>
+                <span className="tracking-wide">
+                  {scanning ? "Running AI Research & Sentiment..." : "Run AI Market Research"}
+                </span>
               </button>
             </div>
           </div>
+
+          {/* Sync Toast Notification */}
+          {syncToast && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs px-4 py-2 rounded-xl flex items-center justify-between animate-fade-in">
+              <span>{syncToast}</span>
+              <button onClick={() => setSyncToast(null)} className="text-txt-muted hover:text-white ml-2 text-xs">✕</button>
+            </div>
+          )}
 
           {/* Interactive Navigation Tabs */}
           <div className="flex border-b border-border text-xs gap-2 overflow-x-auto">
