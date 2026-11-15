@@ -67,7 +67,12 @@ export default function StockModal({ symbol, onClose }: { symbol: string; onClos
       if (res.ok) {
         const d = await res.json();
         if (d && d.price) {
-          setStock(prev => prev ? { ...prev, price: d.price } : prev);
+          setStock(prev => prev ? {
+            ...prev,
+            price: d.price,
+            change: d.change !== undefined ? d.change : prev.change,
+            change_pct: d.change_pct !== undefined ? d.change_pct : prev.change_pct,
+          } : prev);
         }
       }
     } catch {}
@@ -191,9 +196,10 @@ export default function StockModal({ symbol, onClose }: { symbol: string; onClos
     setBuyLoading(true);
 
     // Retry up to 2 times — first call sometimes fails due to proxy warmup
+    const activeId = getEffectiveUserId();
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const res = await fetch(`${API}/api/v1/strategy/ai/should-i-buy/${encodeURIComponent(symbol)}?user_id=1`);
+        const res = await fetch(`${API}/api/v1/strategy/ai/should-i-buy/${encodeURIComponent(symbol)}?user_id=${activeId}`);
         const data = await res.json();
         if (data && data.verdict && data.verdict !== "UNAVAILABLE" && data.reasoning) {
           setBuyVerdict(data);

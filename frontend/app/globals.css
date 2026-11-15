@@ -92,3 +92,16 @@ body {
 .animate-fade-in {
   animation: fade-in 0.3s ease-out;
 }
+
+/* ==================================================================== */
+/* Universal Readability Scale: +25% for Small & Medium Texts            */
+/* Headers and highlighted hero metrics are preserved                   */
+/* ==================================================================== */
+.text-\[9px\] { font-size: 11.5px !important; line-height: 1.25 !important; }
+.text-\[10px\] { font-size: 13px !important; line-height: 1.35 !important; }
+.text-\[11px\] { font-size: 14px !important; line-height: 1.4 !important; }
+.text-\[12px\] { font-size: 15px !important; line-height: 1.45 !important; }
+.text-\[13px\] { font-size: 16px !important; line-height: 1.45 !important; }
+.text-xs { font-size: 0.9375rem !important; line-height: 1.4rem !important; } /* 12px -> 15px (+25%) */
+.text-sm { font-size: 1.09375rem !important; line-height: 1.55rem !important; } /* 14px -> 17.5px (+25%) */
+

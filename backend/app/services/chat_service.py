@@ -12,7 +12,7 @@ from ..models import (
     Portfolio, Holding, Transaction, Watchlist, ChatSession, ChatMessage,
 )
 from ..ai.gemini import get_chat_client, get_chat_model_name, get_gemini_client, get_model_name
-from .market_service import SYMBOL_ALIASES, get_or_create_instrument, resolve_symbol
+from .market_service import SYMBOL_ALIASES, get_or_create_instrument, resolve_symbol, _fetch_quote_waterfall
 
 
 def _extract_symbols_from_text(text: str) -> list[str]:
@@ -34,35 +34,38 @@ def _extract_symbols_from_text(text: str) -> list[str]:
 # --- Gemini Tool Functions (MUST be synchronous def, not async) ---
 
 def get_stock_quote(symbol: str) -> str:
-    """Fetches real-time / latest market price, today's change, percentage change, day high/low, and 52-week range for any Indian stock symbol (e.g. RELIANCE, TCS, INFY, HDFCBANK, TATAMOTORS, ZOMATO)."""
-    import yfinance as yf
-
+    """Fetches real-time / latest market price, today's change, percentage change, day high/low, and 52-week range for any Indian stock symbol (e.g. RELIANCE, TCS, INFY, HDFCBANK, TATAMOTORS, ZOMATO) using multi-tier resilient feeds (Google Finance / Yahoo / Screener / NSE)."""
     clean_sym = symbol.strip().upper().replace(".NS", "").replace(".BO", "")
     resolved_sym = SYMBOL_ALIASES.get(clean_sym, clean_sym)
 
-    old_http = os.environ.pop("http_proxy", None)
-    old_https = os.environ.pop("https_proxy", None)
     try:
-        ticker = yf.Ticker(f"{resolved_sym}.NS")
-        fast = ticker.fast_info
-        price = fast.last_price
-        prev = fast.previous_close
+        # Tier 1-4 Resilient Waterfall Fetch
+        quote = _fetch_quote_waterfall(resolved_sym)
+        price = float(quote["price"]) if quote and quote.get("price") else None
+        chg = float(quote["change"]) if quote and quote.get("change") is not None else 0.0
+        chg_pct = float(quote["change_pct"]) if quote and quote.get("change_pct") is not None else 0.0
+        day_high = float(quote["high"]) if quote and quote.get("high") else None
+        day_low = float(quote["low"]) if quote and quote.get("low") else None
+        yr_high = float(quote["week_52_high"]) if quote and quote.get("week_52_high") else None
+        yr_low = float(quote["week_52_low"]) if quote and quote.get("week_52_low") else None
+        source_name = quote.get("source", "waterfall").upper() if quote else "DATABASE"
+
+        # Fallback to DB cached price if waterfall was unavailable
+        if price is None:
+            with SessionLocal() as s_db:
+                inst = s_db.query(Instrument).filter(Instrument.symbol == resolved_sym).first()
+                if inst and inst.market_price and inst.market_price.price:
+                    price = float(inst.market_price.price)
+                    chg = float(inst.market_price.change or 0.0)
+                    chg_pct = float(inst.market_price.change_pct or 0.0)
+                    day_high = float(inst.market_price.day_high) if inst.market_price.day_high else None
+                    day_low = float(inst.market_price.day_low) if inst.market_price.day_low else None
+                    source_name = "CACHED_LOCAL"
 
         if price is None:
-            hist = ticker.history(period="5d", interval="1d")
-            if not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
-            else:
-                return f"Live quote for {resolved_sym} is currently unavailable on NSE/BSE."
+            return f"Live quote for {resolved_sym} is currently unavailable on NSE/BSE feeds."
 
-        chg = round(price - (prev or price), 2)
-        chg_pct = round((chg / prev) * 100, 2) if prev else 0.0
-        day_high = round(fast.day_high, 2) if fast.day_high else None
-        day_low = round(fast.day_low, 2) if fast.day_low else None
-        yr_high = round(fast.year_high, 2) if fast.year_high else None
-        yr_low = round(fast.year_low, 2) if fast.year_low else None
-
+        # Cache live price to database
         try:
             with SessionLocal() as s_db:
                 inst = s_db.query(Instrument).filter(Instrument.symbol == resolved_sym).first()
@@ -73,37 +76,41 @@ def get_stock_quote(symbol: str) -> str:
                     s_db.refresh(inst)
                 mp = s_db.query(MarketPrice).filter(MarketPrice.instrument_id == inst.id).first()
                 now = datetime.now(UTC)
-                dec_price = Decimal(str(round(price, 2)))
-                dec_chg = Decimal(str(chg))
+                dec_price = Decimal(str(round(price, 4)))
+                dec_chg = Decimal(str(round(chg, 4)))
                 if mp:
                     mp.price = dec_price
                     mp.change = dec_chg
                     mp.change_pct = chg_pct
+                    if day_high: mp.day_high = Decimal(str(round(day_high, 4)))
+                    if day_low: mp.day_low = Decimal(str(round(day_low, 4)))
+                    if yr_high: mp.week_52_high = Decimal(str(round(yr_high, 4)))
+                    if yr_low: mp.week_52_low = Decimal(str(round(yr_low, 4)))
                     mp.fetched_at = now
+                    mp.source = source_name.lower()
                 else:
                     s_db.add(MarketPrice(
                         instrument_id=inst.id, price=dec_price, change=dec_chg, change_pct=chg_pct,
-                        currency="INR", as_of=now, fetched_at=now, source="yfinance", data_kind="LIVE", freshness="LIVE",
+                        day_high=Decimal(str(round(day_high, 4))) if day_high else None,
+                        day_low=Decimal(str(round(day_low, 4))) if day_low else None,
+                        week_52_high=Decimal(str(round(yr_high, 4))) if yr_high else None,
+                        week_52_low=Decimal(str(round(yr_low, 4))) if yr_low else None,
+                        currency="INR", as_of=now, fetched_at=now, source=source_name.lower(), data_kind="LIVE", freshness="LIVE",
                     ))
                 s_db.commit()
         except Exception:
             pass
 
         return (
-            f"Stock: {resolved_sym} (NSE)\n"
+            f"Stock: {resolved_sym} (NSE/BSE)\n"
             f"Live Price: ₹{price:,.2f}\n"
             f"Change Today: {chg:+,.2f} ({chg_pct:+.2f}%)\n"
             f"Day Range: ₹{day_low or 'N/A'} - ₹{day_high or 'N/A'}\n"
             f"52-Week Range: ₹{yr_low or 'N/A'} - ₹{yr_high or 'N/A'}\n"
-            f"Data Source: NSE Live/EOD Market Data"
+            f"Data Source: {source_name} (Resilient Multi-Tier Feed)"
         )
     except Exception as e:
         return f"Error retrieving quote for {resolved_sym}: {str(e)}"
-    finally:
-        if old_http:
-            os.environ["http_proxy"] = old_http
-        if old_https:
-            os.environ["https_proxy"] = old_https
 
 
 def get_market_indices() -> str:

@@ -12,6 +12,8 @@ from ..models import (
     MarketPrice,
     WatchlistItem,
     Watchlist,
+    Holding,
+    AITelecastVault,
 )
 from ..schemas import (
     ArenaSandboxCreate,
@@ -331,6 +333,7 @@ def update_position(db: Session, sandbox_id: int, position_id: int, data: ArenaP
             total_cost = (pos.avg_buy_price * current_qty) + cost
             pos.avg_buy_price = total_cost / new_qty
             pos.quantity = new_qty
+            pos.created_at = datetime.now(UTC)
             # Log BUY trade
             trade = ArenaTrade(
                 sandbox_id=sandbox_id,
@@ -357,6 +360,7 @@ def update_position(db: Session, sandbox_id: int, position_id: int, data: ArenaP
                 return None
             else:
                 pos.quantity = new_qty
+                pos.created_at = datetime.now(UTC)
 
     # 2. Custom Target Price
     if data.custom_target_price is not None:
@@ -389,6 +393,44 @@ def adjust_capital(db: Session, sandbox_id: int, amount: float) -> ArenaSandbox 
     db.commit()
     db.refresh(sb)
     return sb
+
+
+def resolve_stock_ai_score(db: Session, symbol: str, fallback: int | None = None) -> int:
+    """Resolve authentic multi-factor AI score from AI Telecast Vault, Watchlist, or Holding."""
+    sym = resolve_symbol(symbol).upper()
+    bare_sym = sym.replace(".NS", "").replace(".BO", "")
+
+    # 1. Search AITelecastVault by symbol or bare_sym
+    vault = (
+        db.query(AITelecastVault)
+        .filter((AITelecastVault.symbol == sym) | (AITelecastVault.symbol == bare_sym))
+        .order_by(AITelecastVault.id.desc())
+        .first()
+    )
+    if vault and vault.current_ai_score:
+        return vault.current_ai_score
+
+    # 2. Check WatchlistItem
+    wl = (
+        db.query(WatchlistItem)
+        .filter((WatchlistItem.symbol == sym) | (WatchlistItem.symbol == bare_sym))
+        .order_by(WatchlistItem.id.desc())
+        .first()
+    )
+    if wl and wl.ai_entry_score:
+        return wl.ai_entry_score
+
+    # 3. Check Holding
+    h = (
+        db.query(Holding)
+        .filter((Holding.symbol == sym) | (Holding.symbol == bare_sym))
+        .order_by(Holding.id.desc())
+        .first()
+    )
+    if h and h.ai_entry_score:
+        return h.ai_entry_score
+
+    return fallback if fallback is not None else 88
 
 
 def buy_stock(db: Session, sandbox_id: int, order: ArenaOrderCreate) -> ArenaPosition:
@@ -445,6 +487,9 @@ def buy_stock(db: Session, sandbox_id: int, order: ArenaOrderCreate) -> ArenaPos
         else None
     )
 
+    # Resolve authentic AI score
+    score_to_use = order.ai_score if order.ai_score is not None else resolve_stock_ai_score(db, sym)
+
     # Check if position already exists
     pos = db.query(ArenaPosition).filter(
         ArenaPosition.sandbox_id == sandbox_id,
@@ -456,6 +501,9 @@ def buy_stock(db: Session, sandbox_id: int, order: ArenaOrderCreate) -> ArenaPos
         total_cost = (pos.avg_buy_price * pos.quantity) + cost
         pos.avg_buy_price = total_cost / total_qty
         pos.quantity = total_qty
+        pos.created_at = datetime.now(UTC)
+        if pos.ai_score is None:
+            pos.ai_score = score_to_use
         if target_price:
             pos.target_sell_price = target_price
         if stop_price:
@@ -477,6 +525,7 @@ def buy_stock(db: Session, sandbox_id: int, order: ArenaOrderCreate) -> ArenaPos
             stop_loss_price=stop_price,
             horizon=order.horizon or sb.horizon,
             rationale=order.rationale,
+            ai_score=score_to_use,
             created_at=datetime.now(UTC),
         )
         db.add(pos)
@@ -690,6 +739,10 @@ def check_and_execute_arena_triggers(db: Session) -> list[dict]:
     return triggered_trades
 
 
+# Backward-compatible alias for routers/schedulers
+execute_auto_trades_for_all_active_sandboxes = check_and_execute_arena_triggers
+
+
 def import_ai_picks_into_sandbox(
     db: Session,
     sandbox_id: int,
@@ -715,7 +768,7 @@ def import_ai_picks_into_sandbox(
             candidates.append(w.symbol)
 
     # Add standard high-liquidity large caps if candidates is small
-    default_pool = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "ITC", "LT", "ICICIBANK", "BHARTIARTL", "SBIN", "TATAMOTORS"]
+    default_pool = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "ITC", "LT", "ICICIBANK", "BHARTIARTL", "SBIN", "TMPV"]
     for sym in default_pool:
         if sym not in candidates:
             candidates.append(sym)
@@ -1004,11 +1057,12 @@ def get_user_wishlist_stocks(db: Session, user_id: int = 1) -> list[dict]:
         cmp = float(cmp_dec)
         target_buy = float(item.target_buy_price) if item.target_buy_price else round(cmp * 0.96, 2)
         target_sell = float(item.target_sell_price) if item.target_sell_price else round(cmp * 1.16, 2)
+        score_val = item.ai_entry_score or resolve_stock_ai_score(db, item.symbol, fallback=88)
         results.append({
             "symbol": item.symbol,
             "name": item.notes or item.symbol,
             "tab": "My Wishlist",
-            "score": 82,
+            "score": score_val,
             "verdict": "BUY",
             "current_price": cmp,
             "target_buy_price": target_buy,
@@ -1036,11 +1090,12 @@ def get_user_portfolio_stocks(db: Session, user_id: int = 1) -> list[dict]:
         seen.add(h.symbol)
         cmp_dec = get_live_or_cached_price(db, h.symbol)
         cmp = float(cmp_dec)
+        score_val = h.ai_entry_score or resolve_stock_ai_score(db, h.symbol, fallback=88)
         results.append({
             "symbol": h.symbol,
             "name": h.symbol,
             "tab": "My Portfolio",
-            "score": 85,
+            "score": score_val,
             "verdict": "HOLDING",
             "current_price": cmp,
             "target_buy_price": round(cmp * 0.96, 2),

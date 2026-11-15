@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models import Instrument, MarketPrice, MarketIndex, Portfolio, Watchlist, ArenaPosition
+from ..models import Instrument, MarketPrice, MarketIndex, Portfolio, Watchlist, ArenaPosition, ArenaSandbox
 from ..providers.yfinance_provider import YFinanceEodProvider
 from ..providers.google_finance_provider import GoogleFinanceProvider
 from ..providers.nse_india_provider import NseIndiaProvider
@@ -21,29 +21,28 @@ _last_refresh_time: datetime | None = None
 _refresh_lock = asyncio.Lock()
 
 POPULAR_STOCKS = [
-    ("RELIANCE", "Reliance Industries", "Energy"),
-    ("TCS", "Tata Consultancy Services", "IT"),
-    ("HDFCBANK", "HDFC Bank", "Banking"),
-    ("INFY", "Infosys", "IT"),
-    ("ICICIBANK", "ICICI Bank", "Banking"),
-    ("BHARTIARTL", "Bharti Airtel", "Telecom"),
-    ("SBIN", "State Bank of India", "Banking"),
-    ("LT", "Larsen & Toubro", "Infrastructure"),
-    ("ITC", "ITC Limited", "FMCG"),
-    ("WIPRO", "Wipro", "IT"),
-    ("BAJFINANCE", "Bajaj Finance", "Finance"),
-    ("HCLTECH", "HCL Technologies", "IT"),
-    ("MARUTI", "Maruti Suzuki", "Auto"),
-    ("TMPV", "Tata Motors (Passenger)", "Auto"),
-    ("TMCV", "Tata Motors (Commercial)", "Auto"),
-    ("TATAMOTORS", "Tata Motors", "Auto"),
-    ("SUNPHARMA", "Sun Pharma", "Pharma"),
-    ("TITAN", "Titan Company", "Consumer"),
-    ("ADANIENT", "Adani Enterprises", "Diversified"),
-    ("KOTAKBANK", "Kotak Mahindra Bank", "Banking"),
-    ("AXISBANK", "Axis Bank", "Banking"),
-    ("ASIANPAINT", "Asian Paints", "Consumer"),
-    ("ITBEES", "Nippon India ETF Nifty IT", "ETF"),
+    ("TATAPOWER", "Tata Power Company", "Energy"),
+    ("NTPC", "NTPC Limited", "Utilities"),
+    ("POWERGRID", "Power Grid Corporation", "Utilities"),
+    ("ONGC", "Oil & Natural Gas Corporation", "Energy"),
+    ("BPCL", "Bharat Petroleum", "Energy"),
+    ("COALINDIA", "Coal India Limited", "Mining"),
+    ("TATASTEEL", "Tata Steel", "Metals"),
+    ("JSWSTEEL", "JSW Steel", "Metals"),
+    ("HINDALCO", "Hindalco Industries", "Metals"),
+    ("VEDL", "Vedanta Limited", "Metals"),
+    ("NESTLEIND", "Nestle India", "FMCG"),
+    ("BRITANNIA", "Britannia Industries", "FMCG"),
+    ("DABUR", "Dabur India", "FMCG"),
+    ("CIPLA", "Cipla Limited", "Pharma"),
+    ("DRREDDY", "Dr. Reddy's Laboratories", "Pharma"),
+    ("DIVISLAB", "Divi's Laboratories", "Pharma"),
+    ("APOLLOHOSP", "Apollo Hospitals Enterprise", "Healthcare"),
+    ("BEL", "Bharat Electronics", "Defence"),
+    ("HAL", "Hindustan Aeronautics", "Defence"),
+    ("INDUSINDBK", "IndusInd Bank", "Banking"),
+    ("ULTRACEMCO", "UltraTech Cement", "Materials"),
+    ("HEROMOTOCO", "Hero MotoCorp", "Auto"),
 ]
 
 SYMBOL_ALIASES = {
@@ -196,15 +195,24 @@ def update_stock_market_price(db: Session, symbol: str, price: float | Decimal, 
     mp = db.query(MarketPrice).filter(MarketPrice.instrument_id == inst.id).order_by(MarketPrice.fetched_at.desc()).first()
     if mp:
         mp.price = dec_price
+        mp.close = dec_price
         mp.fetched_at = now
         mp.as_of = now
-        if change_pct is not None:
+        if change_pct is not None and float(change_pct) != 0.0:
             mp.change_pct = float(change_pct)
+            if mp.prev_close and float(mp.prev_close) > 0:
+                mp.change = Decimal(str(round(float(dec_price) - float(mp.prev_close), 4)))
+        elif mp.prev_close and float(mp.prev_close) > 0:
+            diff = float(dec_price) - float(mp.prev_close)
+            if abs(diff) > 0.0001:
+                mp.change = Decimal(str(round(diff, 4)))
+                mp.change_pct = round((diff / float(mp.prev_close)) * 100, 2)
         mp.freshness = "LIVE"
     else:
         mp = MarketPrice(
             instrument_id=inst.id,
             price=dec_price,
+            close=dec_price,
             currency="INR",
             change_pct=change_pct,
             as_of=now,
@@ -241,9 +249,9 @@ def _fetch_quote_google_finance(sym: str) -> dict | None:
                         continue
                     text = resp.text
                     patterns = [
-                        r'data-last-price="([0-9,.]+)"',
                         r'class="YMlKec fxKbKc"[^>]*>[\s₹]*([0-9,]+\.?[0-9]*)',
                         r'class="YMlKec fxKbKc">\s*₹?\s*([0-9,]+\.[0-9]+)',
+                        r'data-last-price="([0-9,.]+)"',
                         r'₹\s*([0-9,]+\.[0-9]{1,2})\s*</div>',
                         r'>₹([0-9,]+\.[0-9]+)<',
                         r'data-currency-price="([0-9,.]+)"',
@@ -267,15 +275,33 @@ def _fetch_quote_google_finance(sym: str) -> dict | None:
                                 chg_pct = float(m_pct.group(1).replace("%", "").replace("+", "").strip())
                             except ValueError:
                                 pass
+
+                        prev_close_val = None
+                        m_prev = re.search(r'Previous close.*?class="P6K39c"[^>]*>[\s₹]*([0-9,.]+)', text, re.DOTALL)
+                        if m_prev:
+                            try:
+                                prev_close_val = float(m_prev.group(1).replace(",", ""))
+                            except ValueError:
+                                pass
+
+                        chg_val = None
+                        if prev_close_val and prev_close_val > 0:
+                            chg_val = round(price_val - prev_close_val, 4)
+                            if chg_pct is None:
+                                chg_pct = round((chg_val / prev_close_val) * 100, 2)
+                        elif chg_pct is not None and chg_pct != 0.0:
+                            prev_close_val = round(price_val / (1 + (chg_pct / 100)), 4)
+                            chg_val = round(price_val - prev_close_val, 4)
+
                         return {
                             "price": Decimal(str(round(price_val, 4))),
-                            "change": None,
+                            "change": Decimal(str(chg_val)) if chg_val is not None else None,
                             "change_pct": chg_pct or 0.0,
                             "open": None,
                             "high": None,
                             "low": None,
                             "close": Decimal(str(round(price_val, 4))),
-                            "prev_close": None,
+                            "prev_close": Decimal(str(round(prev_close_val, 4))) if prev_close_val else None,
                             "source": "google_finance",
                             "freshness": "LIVE",
                         }
@@ -289,94 +315,43 @@ def _fetch_quote_google_finance(sym: str) -> dict | None:
     return None
 
 
-def _fetch_quote_fast(sym: str) -> dict | None:
-    """Tier 2: Yahoo Finance (.NS/.BO) fast quote via yfinance."""
-    import yfinance as yf
-    clean = sym.strip().upper().replace(".NS", "").replace(".BO", "")
-    for suffix in [".NS", ".BO"]:
-        try:
-            t = yf.Ticker(f"{clean}{suffix}")
-            fi = t.fast_info
-            p = fi.last_price
-            if p and p > 0:
-                prev = fi.previous_close or p
-                chg = p - prev if prev else 0.0
-                pct = (chg / prev * 100) if prev else 0.0
-                return {
-                    "price": Decimal(str(round(p, 4))),
-                    "change": Decimal(str(round(chg, 4))) if chg is not None else None,
-                    "change_pct": round(pct, 2),
-                    "open": Decimal(str(round(fi.open, 4))) if fi.open else None,
-                    "high": Decimal(str(round(fi.day_high, 4))) if fi.day_high else None,
-                    "low": Decimal(str(round(fi.day_low, 4))) if fi.day_low else None,
-                    "close": Decimal(str(round(p, 4))),
-                    "prev_close": Decimal(str(round(prev, 4))) if prev else None,
-                    "volume": fi.last_volume,
-                    "week_52_high": Decimal(str(round(fi.year_high, 4))) if fi.year_high else None,
-                    "week_52_low": Decimal(str(round(fi.year_low, 4))) if fi.year_low else None,
-                    "source": "yfinance",
-                    "freshness": "LIVE",
-                }
-        except Exception:
-            continue
-    return None
-
-
-def _fetch_quote_screener(sym: str) -> dict | None:
-    """Tier 3: Screener.in Indian fundamentals & live/closing CMP."""
-    try:
-        from ..providers.screener_provider import ScreenerFundamentalsProvider
-        sp = ScreenerFundamentalsProvider()
-        clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
-        data = sp.get_fundamentals(clean)
-        if data and data.get("available") and data.get("ratios"):
-            cp = data["ratios"].get("Current Price")
-            if cp and isinstance(cp, (int, float)) and cp > 0:
-                return {
-                    "price": Decimal(str(round(float(cp), 4))),
-                    "change": None,
-                    "change_pct": 0.0,
-                    "open": None,
-                    "high": None,
-                    "low": None,
-                    "close": Decimal(str(round(float(cp), 4))),
-                    "prev_close": None,
-                    "source": "screener",
-                    "freshness": "SCRAPED",
-                }
-    except Exception:
-        pass
-    return None
-
-
 def _fetch_quote_nse_india(sym: str) -> dict | None:
-    """Tier 4: NSE India official exchange quote API."""
+    """Tier 1: NSE India official exchange quote API."""
     clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json, text/html",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/",
     }
     old_http = os.environ.pop("http_proxy", None)
     old_https = os.environ.pop("https_proxy", None)
     try:
-        with httpx.Client(timeout=4.0, follow_redirects=True, headers=headers) as client:
+        with httpx.Client(timeout=4.5, follow_redirects=True, headers=headers) as client:
             client.get("https://www.nseindia.com", headers={"Accept": "text/html"})
             resp = client.get(f"https://www.nseindia.com/api/quote-equity?symbol={clean}", headers={"Accept": "application/json"})
             if resp.status_code == 200:
                 p_data = resp.json().get("priceInfo", {})
                 last_p = p_data.get("lastPrice") or p_data.get("close")
+                prev_close = p_data.get("previousClose")
+                open_p = p_data.get("open")
                 if last_p and float(last_p) > 0:
-                    pct = p_data.get("pChange", 0.0)
+                    pct = p_data.get("pChange")
+                    chg = p_data.get("change")
+                    if (pct is None or float(pct) == 0.0) and prev_close and float(prev_close) > 0:
+                        diff = float(last_p) - float(prev_close)
+                        pct = round((diff / float(prev_close)) * 100, 2)
+                        chg = diff
+                    intra = p_data.get("intraDayHighLow", {})
                     return {
                         "price": Decimal(str(round(float(last_p), 4))),
-                        "change": Decimal(str(round(float(p_data.get("change", 0.0)), 4))) if p_data.get("change") else None,
+                        "change": Decimal(str(round(float(chg), 4))) if chg is not None else None,
                         "change_pct": float(pct) if pct is not None else 0.0,
-                        "open": None,
-                        "high": None,
-                        "low": None,
+                        "open": Decimal(str(round(float(open_p), 4))) if open_p else None,
+                        "high": Decimal(str(round(float(intra.get("max", 0)), 4))) if intra.get("max") else None,
+                        "low": Decimal(str(round(float(intra.get("min", 0)), 4))) if intra.get("min") else None,
                         "close": Decimal(str(round(float(last_p), 4))),
-                        "prev_close": None,
+                        "prev_close": Decimal(str(round(float(prev_close), 4))) if prev_close else None,
                         "source": "nse_india",
                         "freshness": "OFFICIAL_EXCHANGE",
                     }
@@ -388,31 +363,119 @@ def _fetch_quote_nse_india(sym: str) -> dict | None:
     return None
 
 
+def _fetch_quote_screener(sym: str) -> dict | None:
+    """Tier 2: Screener.in Indian fundamentals & live/closing CMP."""
+    try:
+        from ..providers.screener_provider import ScreenerFundamentalsProvider
+        sp = ScreenerFundamentalsProvider()
+        clean = sym.strip().upper().replace(".NS", "").replace(".BO", "").replace(" ", "")
+        data = sp.get_fundamentals(clean)
+        if data and data.get("available") and data.get("ratios"):
+            cp = data["ratios"].get("Current Price")
+            if cp and isinstance(cp, (int, float)) and cp > 0:
+                high_low = data["ratios"].get("High / Low")
+                day_high = None
+                day_low = None
+                if isinstance(high_low, str) and "/" in high_low:
+                    parts = high_low.split("/")
+                    try:
+                        day_high = Decimal(str(round(float(parts[0].replace(",", "").strip()), 4)))
+                        day_low = Decimal(str(round(float(parts[1].replace(",", "").strip()), 4)))
+                    except Exception:
+                        pass
+                return {
+                    "price": Decimal(str(round(float(cp), 4))),
+                    "change": None,
+                    "change_pct": 0.0,
+                    "open": None,
+                    "high": day_high,
+                    "low": day_low,
+                    "close": Decimal(str(round(float(cp), 4))),
+                    "prev_close": None,
+                    "source": "screener",
+                    "freshness": "SCRAPED",
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_quote_fast(sym: str) -> dict | None:
+    """Tier 4: Yahoo Finance (.NS/.BO) with settlement close & history verification."""
+    import yfinance as yf
+    clean = sym.strip().upper().replace(".NS", "").replace(".BO", "")
+    for suffix in [".NS", ".BO"]:
+        try:
+            t = yf.Ticker(f"{clean}{suffix}")
+            fi = t.fast_info
+            p = fi.last_price
+            prev = fi.previous_close
+            open_p = fi.open
+
+            # Weekend / Market-Closed Check:
+            # If fast_info.last_price returned the opening tick (regularMarketOpen bug)
+            # or prev_close is missing / equal to price, query history for guaranteed finalized settlement close.
+            if not p or not prev or (open_p and abs(float(p) - float(open_p)) < 0.01):
+                try:
+                    hist = t.history(period="5d")
+                    if not hist.empty and len(hist) >= 1:
+                        p = float(hist["Close"].iloc[-1])
+                        if len(hist) >= 2:
+                            prev = float(hist["Close"].iloc[-2])
+                        elif not prev:
+                            prev = float(hist["Open"].iloc[-1])
+                except Exception:
+                    pass
+
+            if p and p > 0:
+                prev_val = prev if (prev and prev > 0) else p
+                chg = p - prev_val
+                pct = ((p - prev_val) / prev_val * 100) if prev_val > 0 else 0.0
+                return {
+                    "price": Decimal(str(round(p, 4))),
+                    "change": Decimal(str(round(chg, 4))),
+                    "change_pct": round(pct, 2),
+                    "open": Decimal(str(round(open_p, 4))) if open_p else None,
+                    "high": Decimal(str(round(fi.day_high, 4))) if fi.day_high else None,
+                    "low": Decimal(str(round(fi.day_low, 4))) if fi.day_low else None,
+                    "close": Decimal(str(round(p, 4))),
+                    "prev_close": Decimal(str(round(prev_val, 4))),
+                    "volume": fi.last_volume,
+                    "week_52_high": Decimal(str(round(fi.year_high, 4))) if fi.year_high else None,
+                    "week_52_low": Decimal(str(round(fi.year_low, 4))) if fi.year_low else None,
+                    "source": "yfinance",
+                    "freshness": "LIVE",
+                }
+        except Exception:
+            continue
+    return None
+
+
 def _fetch_quote_waterfall(sym: str) -> dict | None:
     """
     4-Tier Resilient Waterfall Quoting Engine:
-    Tier 1: Google Finance (Fast Live NSE/BSE Feed)
-    Tier 2: Yahoo Finance (yfinance .NS/.BO fast_info)
-    Tier 3: Screener.in (Authentic Indian Fundamentals & CMP)
-    Tier 4: NSE India Official Exchange API (lastPrice)
+    Tier 1: NSE India Official Exchange API (lastPrice, close, previousClose, pChange)
+    Tier 2: Yahoo Finance (yfinance .NS/.BO with 5d historical close verification)
+    Tier 3: Google Finance (Live market tick)
+    Tier 4: Screener.in (Authentic Indian Fundamentals & CMP fallback only)
     """
-    # Tier 1: Google Finance
-    q = _fetch_quote_google_finance(sym)
+    # Tier 1: NSE India Official Exchange API
+    q = _fetch_quote_nse_india(sym)
     if q and q.get("price") and q["price"] > 0:
         return q
 
-    # Tier 2: Yahoo Finance
+    # Tier 2: Yahoo Finance (Enhanced with 5d settlement close fallback - prevents open tick freeze)
     q = _fetch_quote_fast(sym)
     if q and q.get("price") and q["price"] > 0:
         return q
 
-    # Tier 3: Screener.in
-    q = _fetch_quote_screener(sym)
+    # Tier 3: Google Finance (Fast live exchange tick)
+    q = _fetch_quote_google_finance(sym)
     if q and q.get("price") and q["price"] > 0:
         return q
 
-    # Tier 4: NSE India Official API
-    q = _fetch_quote_nse_india(sym)
+    # Tier 4: Screener.in (Fallback only)
+    q = _fetch_quote_screener(sym)
     if q and q.get("price") and q["price"] > 0:
         return q
 
@@ -421,19 +484,40 @@ def _fetch_quote_waterfall(sym: str) -> dict | None:
 
 def _save_quote_to_db(db: Session, inst: Instrument, data: dict):
     now = datetime.now(UTC)
+    price = data["price"]
+    prev_close = data.get("prev_close")
+    chg = data.get("change")
+    chg_pct = data.get("change_pct")
+
     mp = db.query(MarketPrice).filter(MarketPrice.instrument_id == inst.id).first()
+
+    # Guard: Never overwrite high-precision live quote with low-precision scraped fallback
+    if mp and mp.price and mp.freshness in ("OFFICIAL_EXCHANGE", "LIVE") and data.get("freshness") == "SCRAPED":
+        return
+
+    # Inherit existing prev_close if missing from scraped quote
+    if not prev_close and mp and mp.prev_close and float(mp.prev_close) > 0:
+        prev_close = mp.prev_close
+
+    # Math safety: Auto-compute change and change_pct if stuck at 0.0 or None while price and prev_close differ
+    if prev_close and float(prev_close) > 0 and (chg_pct is None or float(chg_pct) == 0.0):
+        diff = float(price) - float(prev_close)
+        if abs(diff) > 0.0001:
+            chg = Decimal(str(round(diff, 4)))
+            chg_pct = round((diff / float(prev_close)) * 100, 2)
+
     if not mp:
         mp = MarketPrice(
             instrument_id=inst.id,
-            price=data["price"],
+            price=price,
             currency="INR",
-            change=data.get("change"),
-            change_pct=data.get("change_pct"),
+            change=chg,
+            change_pct=chg_pct,
             open=data.get("open"),
             high=data.get("high"),
             low=data.get("low"),
-            close=data.get("close"),
-            prev_close=data.get("prev_close"),
+            close=data.get("close") or price,
+            prev_close=prev_close,
             volume=data.get("volume"),
             week_52_high=data.get("week_52_high"),
             week_52_low=data.get("week_52_low"),
@@ -445,36 +529,52 @@ def _save_quote_to_db(db: Session, inst: Instrument, data: dict):
         )
         db.add(mp)
     else:
-        mp.price = data["price"]
-        if data.get("change") is not None: mp.change = data["change"]
-        if data.get("change_pct") is not None: mp.change_pct = data["change_pct"]
+        mp.price = price
+        if chg is not None: mp.change = chg
+        if chg_pct is not None: mp.change_pct = chg_pct
         if data.get("open") is not None: mp.open = data["open"]
         if data.get("high") is not None: mp.high = data["high"]
         if data.get("low") is not None: mp.low = data["low"]
         if data.get("close") is not None: mp.close = data["close"]
-        if data.get("prev_close") is not None: mp.prev_close = data["prev_close"]
+        if prev_close is not None: mp.prev_close = prev_close
         if data.get("volume") is not None: mp.volume = data["volume"]
         if data.get("week_52_high") is not None: mp.week_52_high = data["week_52_high"]
         if data.get("week_52_low") is not None: mp.week_52_low = data["week_52_low"]
+        mp.source = data.get("source", mp.source or "waterfall")
         mp.fetched_at = now
         mp.freshness = data.get("freshness", "LIVE")
     db.commit()
 
 
-async def refresh_all_prices(db: Session) -> dict:
+async def refresh_all_prices(db: Session, user_id: int | None = None) -> dict:
     global _last_refresh_time
     symbols: set[str] = set()
 
     for s, _, _ in POPULAR_STOCKS:
         symbols.add(resolve_symbol(s))
-    for p in db.query(Portfolio).all():
-        for h in p.holdings:
-            symbols.add(resolve_symbol(h.symbol))
-    for w in db.query(Watchlist).all():
-        for it in w.items:
-            symbols.add(resolve_symbol(it.symbol))
-    for pos in db.query(ArenaPosition).all():
-        symbols.add(resolve_symbol(pos.symbol))
+
+    if user_id is not None:
+        # Scoped strictly to the active logged-in user for maximum speed and focus
+        for p in db.query(Portfolio).filter(Portfolio.user_id == user_id).all():
+            for h in p.holdings:
+                symbols.add(resolve_symbol(h.symbol))
+        for w in db.query(Watchlist).filter(Watchlist.user_id == user_id).all():
+            for it in w.items:
+                symbols.add(resolve_symbol(it.symbol))
+        for sb in db.query(ArenaSandbox).filter(ArenaSandbox.user_id == user_id, ArenaSandbox.is_active == True).all():
+            for pos in sb.positions:
+                symbols.add(resolve_symbol(pos.symbol))
+    else:
+        # System-wide sync across all users
+        for p in db.query(Portfolio).all():
+            for h in p.holdings:
+                symbols.add(resolve_symbol(h.symbol))
+        for w in db.query(Watchlist).all():
+            for it in w.items:
+                symbols.add(resolve_symbol(it.symbol))
+        for pos in db.query(ArenaPosition).all():
+            symbols.add(resolve_symbol(pos.symbol))
+
     # Also include any active equity/ETF instruments in DB
     for inst in db.query(Instrument).filter(Instrument.is_active == True).all():
         if inst.asset_type != "MUTUAL_FUND" and " " not in inst.symbol:
@@ -504,13 +604,6 @@ async def refresh_all_prices(db: Session) -> dict:
             inst = get_or_create_instrument(db, sym)
             _save_quote_to_db(db, inst, data)
             refreshed.append(sym)
-            # If TMPV was updated, mirror to TATAMOTORS instrument so legacy views show live price
-            if sym == "TMPV":
-                tatamotors_inst = db.query(Instrument).filter(Instrument.symbol == "TATAMOTORS").first()
-                if tatamotors_inst:
-                    tatamotors_inst.name = "Tata Motors (TMPV)"
-                    _save_quote_to_db(db, tatamotors_inst, data)
-                    refreshed.append("TATAMOTORS")
         else:
             missing.append(sym)
 
@@ -523,9 +616,9 @@ async def refresh_all_prices(db: Session) -> dict:
     }
 
 
-async def refresh_all_locked(db: Session) -> dict:
+async def refresh_all_locked(db: Session, user_id: int | None = None) -> dict:
     async with _refresh_lock:
-        return await refresh_all_prices(db)
+        return await refresh_all_prices(db, user_id=user_id)
 
 
 def seed_indices_if_empty(db: Session) -> list[MarketIndex]:

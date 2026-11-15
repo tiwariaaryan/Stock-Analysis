@@ -6,60 +6,6 @@ import StockModal from "@/components/StockModal";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-const cards = [
-  {
-    href: "/ai-intelligence",
-    title: "AI Intelligence",
-    desc: "Dalal Street quant scoring, 3-stage dip ladders, statistical win rates & macro regime",
-    gradient: "from-rose-900/40 to-bg-card",
-    iconColor: "#f43f5e",
-  },
-  {
-    href: "/market",
-    title: "Live Market",
-    desc: "Browse stocks, search any symbol, view detailed charts and key stats",
-    gradient: "from-emerald-900/40 to-bg-card",
-    iconColor: "#00c853",
-  },
-  {
-    href: "/portfolio",
-    title: "My Portfolio",
-    desc: "Track holdings, total investments, P&L, and returns with central ledger",
-    gradient: "from-blue-900/40 to-bg-card",
-    iconColor: "#3b82f6",
-  },
-  {
-    href: "/arena",
-    title: "Paper Arena",
-    desc: "Simulate & battle test User vs AI vs Tips with custom capital, automated triggers & leaderboards",
-    gradient: "from-cyan-900/40 to-bg-card",
-    iconColor: "#06b6d4",
-  },
-  {
-    href: "/wishlist",
-    title: "Wishlists",
-    desc: "Target price buy/sell alerts, research notes, and dip accumulation lists",
-    gradient: "from-amber-900/40 to-bg-card",
-    iconColor: "#f59e0b",
-  },
-  {
-    href: "/chat",
-    title: "AI Chat",
-    desc: "Dalal street veteran copilot with live portfolio, wishlist, and quant context",
-    gradient: "from-purple-900/40 to-bg-card",
-    iconColor: "#a78bfa",
-  },
-];
-
-const icons: Record<string, string> = {
-  "/ai-intelligence": "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z",
-  "/market": "M22 7l-8.5 8.5-4-4L2 17 M16 7h6v6",
-  "/portfolio": "M21 12V7H5a2 2 0 0 1 0-4h14v4 M3 5v14a2 2 0 0 0 2 2h16v-5 M18 12a2 2 0 0 0 0 4h4v-4Z",
-  "/arena": "M6 9H4.5a2.5 2.5 0 0 1 0-5H6 M18 9h1.5a2.5 2.5 0 0 0 0-5H18 M4 22h16 M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1h10v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34 M6 4h12v7a6 6 0 0 1-12 0V4z",
-  "/wishlist": "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
-  "/chat": "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-};
-
 type MarketIndex = {
   id: number;
   symbol: string;
@@ -230,7 +176,8 @@ export default function Home() {
     setSyncingPrices(true);
     setSyncToast(null);
     try {
-      const res = await fetch(`${API}/api/v1/market/refresh-all`, { method: "POST" });
+      const activeId = getEffectiveUserId();
+      const res = await fetch(`${API}/api/v1/market/refresh-all?user_id=${activeId}`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setSyncToast(`✅ Successfully synced ${data.refreshed}/${data.total} stock prices across Portfolio, Wishlist & Paper Arena!`);
@@ -264,21 +211,37 @@ export default function Home() {
   const handleAddToWishlist = async (sym: string, targetPrice?: number) => {
     try {
       const activeId = getEffectiveUserId();
+      let targetListId: number | null = null;
       const wRes = await fetch(`${API}/api/v1/watchlists?user_id=${activeId}`);
       if (wRes.ok) {
         const lists = await wRes.json();
         if (lists && lists.length > 0) {
-          await fetch(`${API}/api/v1/watchlists/${lists[0].id}/items`, {
+          targetListId = lists[0].id;
+        } else {
+          // Auto-create default watchlist if user has none
+          const createRes = await fetch(`${API}/api/v1/watchlists?user_id=${activeId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              symbol: sym.toUpperCase(),
-              target_buy_price: targetPrice || null,
-              notes: "Added from AI Market Recommendations",
-            }),
+            body: JSON.stringify({ name: "Primary Wishlist", description: "Default Wishlist" }),
           });
-          setAddedSymbols((prev) => new Set([...prev, sym]));
+          if (createRes.ok) {
+            const newList = await createRes.json();
+            targetListId = newList.id;
+          }
         }
+      }
+
+      if (targetListId) {
+        await fetch(`${API}/api/v1/watchlists/${targetListId}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: sym.toUpperCase(),
+            target_sell_price: targetPrice || null,
+            notes: "Added from AI Market Recommendations",
+          }),
+        });
+        setAddedSymbols((prev) => new Set([...prev, sym]));
       }
     } catch {
       // ignore
@@ -289,10 +252,9 @@ export default function Home() {
     n == null ? "—" : Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-48px)] p-4 md:p-8">
-      <div className="w-full max-w-5xl space-y-6">
-        {/* Greeting */}
-        <div className="text-center">
+    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Greeting */}
+      <div className="text-center">
           <div className="w-14 h-14 rounded-2xl bg-accent-muted flex items-center justify-center mx-auto mb-3">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.5">
               <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z" />
@@ -302,6 +264,46 @@ export default function Home() {
           <p className="text-sm text-txt-secondary mt-1">
             Autonomous <span className="text-accent-light">Dalal Street Quant Intelligence</span> & Investment Copilot
           </p>
+        </div>
+
+        {/* Market Indices (Central Database) - On Top of Home Screen */}
+        <div className="bg-bg-card border border-border rounded-xl p-4 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <p className="text-xs text-txt-muted font-bold uppercase tracking-wider">Market Overview (Central DB)</p>
+            </div>
+            <span className="text-[11px] text-txt-dim font-medium">NSE / BSE</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            {indices.length > 0
+              ? indices.map((i, idx) => {
+                  const chgPct = i.change_pct ?? 0;
+                  const up = chgPct >= 0;
+                  return (
+                    <div key={`index-${i.symbol}-${idx}`} className="text-center bg-bg-primary/50 rounded-lg p-3 border border-border/50">
+                      <p className="text-[11px] text-txt-muted mb-1">{i.name}</p>
+                      <p className="text-base font-bold text-txt-primary font-mono">{fmt(i.value)}</p>
+                      <p className={`text-[11px] font-medium mt-0.5 ${up ? "text-gain" : "text-loss"}`}>
+                        {up ? "+" : ""}
+                        {chgPct.toFixed(2)}%
+                      </p>
+                    </div>
+                  );
+                })
+              : [
+                  { name: "NIFTY 50", val: "22,620.35", chg: "+0.85%", up: true },
+                  { name: "SENSEX", val: "74,512.34", chg: "+0.71%", up: true },
+                  { name: "NIFTY Bank", val: "48,153.35", chg: "+1.02%", up: true },
+                  { name: "NIFTY IT", val: "33,245.10", chg: "-0.32%", up: false },
+                ].map((i, idx) => (
+                  <div key={`def-index-${i.name}-${idx}`} className="text-center bg-bg-primary/50 rounded-lg p-3 border border-border/50">
+                    <p className="text-[11px] text-txt-muted mb-1">{i.name}</p>
+                    <p className="text-base font-bold text-txt-primary font-mono">{i.val}</p>
+                    <p className={`text-[11px] font-medium mt-0.5 ${i.up ? "text-gain" : "text-loss"}`}>{i.chg}</p>
+                  </div>
+                ))}
+          </div>
         </div>
 
         {/* Daily 2-Minute Actionable Snapshot Banner */}
@@ -374,7 +376,7 @@ export default function Home() {
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.8)]" />
 
           {/* Card Top Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-4">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-border/80 pb-4">
             <div>
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#38bdf8] animate-pulse" />
@@ -388,9 +390,9 @@ export default function Home() {
             </div>
 
             {/* Master 2-Button Control Center */}
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2.5 sm:gap-3 shrink-0 flex-wrap sm:flex-nowrap">
               {recData?.timestamp && (
-                <span className="text-[10px] text-cyan-300/80 hidden lg:inline-block font-mono bg-bg-primary/80 px-2.5 py-1 rounded border border-border">
+                <span className="text-[11px] text-cyan-300/80 font-mono bg-bg-primary/80 px-2.5 py-2 rounded-xl border border-border shrink-0 whitespace-nowrap">
                   Scanned: {new Date(recData.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
@@ -399,7 +401,7 @@ export default function Home() {
               <button
                 onClick={handleSyncAllPrices}
                 disabled={syncingPrices}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 transition-all cursor-pointer active:scale-95 border ${
+                className={`h-10 px-4 rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 border whitespace-nowrap shrink-0 ${
                   syncingPrices
                     ? "bg-cyan-600/40 border-cyan-400 text-cyan-200 animate-pulse shadow-cyan-950/40"
                     : "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white border-cyan-400/40 shadow-cyan-950/30"
@@ -408,7 +410,7 @@ export default function Home() {
               >
                 <span className={`text-sm ${syncingPrices ? "animate-spin" : ""}`}>🔄</span>
                 <span className="tracking-wide">
-                  {syncingPrices ? "Syncing All Live Prices..." : "Sync All Live Prices"}
+                  {syncingPrices ? "Syncing Live Prices..." : "Sync All Live Prices"}
                 </span>
               </button>
 
@@ -416,7 +418,7 @@ export default function Home() {
               <button
                 onClick={handleScanMarket}
                 disabled={scanning}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 transition-all cursor-pointer active:scale-95 border ${
+                className={`h-10 px-4 rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 border whitespace-nowrap shrink-0 ${
                   scanning
                     ? "bg-indigo-600/40 border-indigo-400 text-indigo-200 animate-pulse shadow-indigo-950/40"
                     : "bg-gradient-to-r from-indigo-500 via-indigo-600 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white border-indigo-400/40 shadow-[0_0_15px_rgba(99,102,241,0.4)]"
@@ -425,7 +427,7 @@ export default function Home() {
               >
                 <span className={`text-sm ${scanning ? "animate-spin text-cyan-200" : "text-cyan-200"}`}>⚡</span>
                 <span className="tracking-wide">
-                  {scanning ? "Running AI Research & Sentiment..." : "Run AI Market Research"}
+                  {scanning ? "Researching..." : "Run AI Market Research"}
                 </span>
               </button>
             </div>
@@ -440,42 +442,46 @@ export default function Home() {
           )}
 
           {/* Interactive Navigation Tabs */}
-          <div className="flex border-b border-border text-xs gap-2 overflow-x-auto">
-            <button
-              onClick={() => setActiveTab("top5")}
-              className={`py-2 px-3 font-bold transition-all border-b-2 flex items-center gap-1.5 ${
-                activeTab === "top5"
-                  ? "border-accent text-accent-light"
-                  : "border-transparent text-txt-muted hover:text-txt-primary"
-              }`}
-            >
-              <span>🎯 Top 5 Curated AI Recommendations</span>
-              {recData?.top_5_recommendations && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/20 text-accent-light font-mono">
-                  {recData.top_5_recommendations.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("movers")}
-              className={`py-2 px-3 font-bold transition-all border-b-2 flex items-center gap-1.5 ${
-                activeTab === "movers"
-                  ? "border-emerald-400 text-emerald-400"
-                  : "border-transparent text-txt-muted hover:text-txt-primary"
-              }`}
-            >
-              <span>📈 Market Movers (Top 10 Gainers & Losers)</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("sentiment")}
-              className={`py-2 px-3 font-bold transition-all border-b-2 flex items-center gap-1.5 ${
-                activeTab === "sentiment"
-                  ? "border-purple-400 text-purple-400"
-                  : "border-transparent text-txt-muted hover:text-txt-primary"
-              }`}
-            >
-              <span>🌐 Dalal Street Pulse & Future Catalysts</span>
-            </button>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
+            <div className="inline-flex p-1.5 bg-bg-primary/90 rounded-xl border border-border/80 gap-1.5 text-xs shadow-inner">
+              <button
+                onClick={() => setActiveTab("top5")}
+                className={`px-3.5 py-2 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeTab === "top5"
+                    ? "bg-gradient-to-r from-indigo-500/25 to-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-bg-hover/60 border border-transparent"
+                }`}
+              >
+                <span>🎯 Top 5 Curated AI Recommendations</span>
+                {recData?.top_5_recommendations && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono border border-cyan-500/30">
+                    {recData.top_5_recommendations.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab("movers")}
+                className={`px-3.5 py-2 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeTab === "movers"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-bg-hover/60 border border-transparent"
+                }`}
+              >
+                <span>📈 Market Movers (Top 10 Gainers & Losers)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("sentiment")}
+                className={`px-3.5 py-2 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  activeTab === "sentiment"
+                    ? "bg-purple-500/20 text-purple-300 border border-purple-400/40 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-bg-hover/60 border border-transparent"
+                }`}
+              >
+                <span>🌐 Dalal Street Pulse & Future Catalysts</span>
+              </button>
+            </div>
           </div>
 
           {/* Tab 1: Top 5 Curated AI Recommendations (Option 4: Big Bets Hero + Compact Table) */}
@@ -530,21 +536,24 @@ export default function Home() {
 
                             <div>
                               {/* Top Bar: Rank, Symbol, Action Badge with Conviction % */}
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[9px] font-black font-mono px-1.5 py-0.5 rounded bg-bg-hover text-cyan-300 border border-slate-700">
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-[10px] font-black font-mono px-1.5 py-0.5 rounded bg-bg-hover text-cyan-300 border border-slate-700 shrink-0">
                                     #{rec.rank}
                                   </span>
-                                  <span className="font-black text-sm ultra-white group-hover:text-cyan-300 font-mono transition-colors">
+                                  <span className="font-black text-sm ultra-white group-hover:text-cyan-300 font-mono transition-colors shrink-0">
                                     {rec.symbol}
                                   </span>
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-input text-slate-300 border border-slate-700 font-medium">
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-bg-input text-slate-300 border border-slate-700 font-medium truncate max-w-[125px]"
+                                    title={rec.category}
+                                  >
                                     {rec.category}
                                   </span>
                                 </div>
 
                                 <div
-                                  className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1 glow-cyan-badge"
+                                  className="px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 whitespace-nowrap glow-cyan-badge"
                                   style={{
                                     backgroundColor: `${rec.action_color}25`,
                                     color: rec.action_color,
@@ -552,7 +561,9 @@ export default function Home() {
                                   }}
                                 >
                                   <span>{rec.action}</span>
-                                  <span className="font-mono text-[9px] opacity-90">{conviction}%</span>
+                                  <span className="font-mono text-[10px] bg-black/40 px-1 py-0.5 rounded text-white font-bold ml-1">
+                                    {conviction}%
+                                  </span>
                                 </div>
                               </div>
 
@@ -691,9 +702,9 @@ export default function Home() {
                                 </td>
 
                                 {/* AI Verdict & Conviction Badge */}
-                                <td className="py-2.5 px-3">
+                                <td className="py-2.5 px-3 whitespace-nowrap">
                                   <div
-                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider"
+                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider whitespace-nowrap"
                                     style={{
                                       backgroundColor: `${rec.action_color}25`,
                                       color: rec.action_color,
@@ -701,7 +712,7 @@ export default function Home() {
                                     }}
                                   >
                                     <span>{rec.action}</span>
-                                    <span className="font-mono text-[9px] bg-black/40 px-1 rounded">
+                                    <span className="font-mono text-[9px] bg-black/40 px-1 py-0.5 rounded text-white font-bold">
                                       {conviction}%
                                     </span>
                                   </div>
@@ -1008,74 +1019,6 @@ export default function Home() {
               )}
             </div>
           )}
-        </div>
-
-        {/* Navigation Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-          {cards.map((c) => (
-            <Link key={c.href} href={c.href} className="block group">
-              <div
-                className={`bg-gradient-to-b ${c.gradient} border border-border rounded-xl p-4 h-full hover:border-border-hover transition-all flex flex-col justify-between`}
-              >
-                <div>
-                  <svg
-                    width="22"
-                    height="22"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke={c.iconColor}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="mb-3"
-                  >
-                    <path d={icons[c.href]} />
-                  </svg>
-                  <h3 className="text-xs font-semibold text-txt-primary mb-1 group-hover:text-accent-light transition-colors">
-                    {c.title}
-                  </h3>
-                  <p className="text-[11px] text-txt-muted leading-relaxed">{c.desc}</p>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-
-        {/* Market Indices (Central Database) */}
-        <div className="bg-bg-card border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-txt-muted font-medium">Market Overview (Central DB)</p>
-            <span className="text-[10px] text-txt-dim">NSE / BSE</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {indices.length > 0
-              ? indices.map((i, idx) => {
-                  const chgPct = i.change_pct ?? 0;
-                  const up = chgPct >= 0;
-                  return (
-                    <div key={`index-${i.symbol}-${idx}`} className="text-center bg-bg-primary/50 rounded-lg p-3 border border-border/50">
-                      <p className="text-[11px] text-txt-muted mb-1">{i.name}</p>
-                      <p className="text-base font-bold text-txt-primary font-mono">{fmt(i.value)}</p>
-                      <p className={`text-[11px] font-medium mt-0.5 ${up ? "text-gain" : "text-loss"}`}>
-                        {up ? "+" : ""}
-                        {chgPct.toFixed(2)}%
-                      </p>
-                    </div>
-                  );
-                })
-              : [
-                  { name: "NIFTY 50", val: "22,620.35", chg: "+0.85%", up: true },
-                  { name: "SENSEX", val: "74,512.34", chg: "+0.71%", up: true },
-                  { name: "NIFTY Bank", val: "48,153.35", chg: "+1.02%", up: true },
-                  { name: "NIFTY IT", val: "33,245.10", chg: "-0.32%", up: false },
-                ].map((i, idx) => (
-                  <div key={`def-index-${i.name}-${idx}`} className="text-center bg-bg-primary/50 rounded-lg p-3 border border-border/50">
-                    <p className="text-[11px] text-txt-muted mb-1">{i.name}</p>
-                    <p className="text-base font-bold text-txt-primary font-mono">{i.val}</p>
-                    <p className={`text-[11px] font-medium mt-0.5 ${i.up ? "text-gain" : "text-loss"}`}>{i.chg}</p>
-                  </div>
-                ))}
-          </div>
         </div>
 
         {/* Detailed Technical + Fundamental Analysis Popout Modal (Option 4 Click Effect) */}
@@ -1412,6 +1355,5 @@ export default function Home() {
           Dalal Street Quant Engine &middot; Research platform only &middot; Not financial advice &middot; No order execution
         </p>
       </div>
-    </div>
   );
 }

@@ -88,6 +88,102 @@ type StockOptionItem = {
   horizon_label?: string;
 };
 
+function formatDdMmYyyy(dateStr?: string | null): string {
+  if (!dateStr) return "—";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "—";
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  } catch {
+    return "—";
+  }
+}
+
+// Canonical AI Intelligence Sub-Tab horizon mappings (Derived strictly from AI Discovery Strategy Engine)
+const AI_SUBTAB_HORIZONS: Record<string, string> = {
+  // 1. Fast Momentum & Delivery Breakouts (Badge: 7 to 14 Days)
+  TRENT: "7 – 14 Days",
+  DIXON: "7 – 14 Days",
+  ETERNAL: "7 – 14 Days",
+  KAYNES: "7 – 14 Days",
+  ZOMATO: "7 – 14 Days",
+  MAZDOCK: "7 – 14 Days",
+  BHARTIARTL: "7 – 14 Days",
+  ELECON: "7 – 14 Days",
+  APARINDS: "7 – 14 Days",
+
+  // 2. Mean-Reversion Bargain Dips (Badge: 14 Days to 1 Month)
+  POLYCAB: "14D – 1M",
+  CIPLA: "14D – 1M",
+  SUNPHARMA: "14D – 1M",
+  HDFCAMC: "14D – 1M",
+  ASTRAL: "14D – 1M",
+  MUTHOOTFIN: "14D – 1M",
+
+  // 3. Untouched Multibagger Growth Rockets (Badge: 3 to 6 Months)
+  SUZLON: "3M – 6M",
+  KPITTECH: "3M – 6M",
+  TATAELXSI: "3M – 6M",
+  TITAGARH: "3M – 6M",
+  TEJASNET: "3M – 6M",
+  IREDA: "3M – 6M",
+  PERSISTENT: "3M – 6M",
+  COFORGE: "3M – 6M",
+
+  // 4. Macro Theme & Sector Tailwind Surfers (Badge: 3 to 6 Months / 6M – 1Y)
+  RVNL: "3M – 6M",
+  REC: "3M – 6M",
+  PFC: "3M – 6M",
+  POWERGRID: "6M – 1Y",
+
+  // 5. Wide-Moat Monopoly Compounders (Badge: 6 Months to 1 Year)
+  HAL: "6M – 1Y",
+  BEL: "6M – 1Y",
+  MCX: "6M – 1Y",
+  CAMS: "6M – 1Y",
+  CDSL: "6M – 1Y",
+  BSE: "6M – 1Y",
+  IRCTC: "6M – 1Y",
+  CRISIL: "6M – 1Y",
+  TCS: "6M – 1Y",
+  INFY: "6M – 1Y",
+  HCLTECH: "6M – 1Y",
+  LT: "6M – 1Y",
+  TITAN: "6M – 1Y",
+  MARUTI: "6M – 1Y",
+  ICICIBANK: "6M – 1Y",
+  HDFCBANK: "6M – 1Y",
+  RELIANCE: "6M – 1Y",
+
+  // 6. Undervalued Value Compounders (Badge: 1 Year+)
+  COALINDIA: "1Y+",
+  NMDC: "1Y+",
+  SBIN: "1Y+",
+  CANBK: "1Y+",
+  GAIL: "1Y+",
+  ONGC: "1Y+",
+  ITC: "1Y+",
+};
+
+function resolveStockAIHorizon(symbol?: string | null, posHorizon?: string | null): string {
+  const sym = (symbol || "").toUpperCase().replace(".NS", "").replace(".BO", "").trim();
+  if (sym && AI_SUBTAB_HORIZONS[sym]) {
+    return AI_SUBTAB_HORIZONS[sym];
+  }
+
+  const raw = (posHorizon || "1M").trim().toUpperCase();
+  if (raw === "1W" || raw === "7D" || raw.includes("7 DAY") || raw.includes("7-14")) return "7 – 14 Days";
+  if (raw === "1M" || raw.includes("14D") || raw.includes("1 MONTH")) return "14D – 1M";
+  if (raw === "3M" || raw.includes("3 MONTH") || raw.includes("3-6")) return "3M – 6M";
+  if (raw === "6M" || raw.includes("6 MONTH") || raw.includes("6M-1Y")) return "6M – 1Y";
+  if (raw === "1Y" || raw.includes("1 YEAR") || raw.includes("1Y+")) return "1Y+";
+  if (raw === "FLEXIBLE") return "Flexible";
+  return "3M – 6M";
+}
+
 export default function PaperTradingArenaPage() {
   const { rawUrl, userId } = useApi();
   const effectiveUid = userId || 1;
@@ -140,6 +236,10 @@ export default function PaperTradingArenaPage() {
   // Inline editing states for positions table
   const [editingTargetPosId, setEditingTargetPosId] = useState<number | null>(null);
   const [customTargetInput, setCustomTargetInput] = useState<string>("");
+
+  // Intelligence Center Chart Tab
+  const [chartTab, setChartTab] = useState<"RUNWAY" | "ALLOCATION" | "HORIZON">("RUNWAY");
+  const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
 
   // Capital adjust state
   const [capitalDelta, setCapitalDelta] = useState<number>(25000);
@@ -344,6 +444,7 @@ export default function PaperTradingArenaPage() {
         stop_loss_price: orderStopLoss || null,
         horizon: detail?.horizon || "1M",
         rationale: activeOrderStock.rationale,
+        ai_score: activeOrderStock.score || null,
       };
 
       const res = await fetch(rawUrl(`/api/v1/arena/sandboxes/${selectedSandboxId}/orders`), {
@@ -1104,10 +1205,15 @@ export default function PaperTradingArenaPage() {
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-white text-xs">{pos.symbol}</span>
                               <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30" title="Locked AI Entry Score (Snapshot at time of trade)">
-                                [{pos.ai_score ?? 82}]
+                                [{pos.ai_score ?? "--"}]
                               </span>
                             </div>
                             <span className="text-[10px] text-txt-muted truncate max-w-[130px] block">{pos.name}</span>
+                            {pos.created_at && (
+                              <span className="text-[9.5px] text-txt-dim font-mono block mt-0.5 tracking-tight">
+                                {formatDdMmYyyy(pos.created_at)}
+                              </span>
+                            )}
                           </td>
 
                           {/* Editable Quantity (+ and - steppers) */}
@@ -1160,12 +1266,14 @@ export default function PaperTradingArenaPage() {
                             </div>
                           </td>
 
-                          {/* AI Target (Preserved benchmark) */}
+                          {/* AI Target (Preserved benchmark with Time Horizon) */}
                           <td className="py-3 px-3 text-center">
                             <span className="font-mono text-cyan-300 font-semibold text-xs">
                               ₹{Number(pos.ai_target_price || pos.target_sell_price).toFixed(2)}
                             </span>
-                            <span className="text-[9px] block text-txt-muted">AI Benchmark</span>
+                            <span className="text-[9.5px] block font-mono text-cyan-400/90 font-medium tracking-tight">
+                              {resolveStockAIHorizon(pos.symbol, pos.horizon)}
+                            </span>
                           </td>
 
                           {/* Custom Target (Editable) */}
@@ -1245,97 +1353,691 @@ export default function PaperTradingArenaPage() {
             )}
           </div>
 
-          {/* Automated Execution & Trade History Table */}
-          <div className="bg-bg-card border border-border rounded-2xl p-5 shadow-lg space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <span>📜</span> Automated Execution & Trade History ({detail.trades.length})
-                </h3>
-                <p className="text-[11px] text-txt-muted mt-0.5">
-                  Complete audit log of executed buys, profit targets hit, and automated stop-loss exits.
-                </p>
-              </div>
-              <div className="text-xs font-mono text-txt-secondary">
-                Realized Gains/Loss:{" "}
-                <strong className={detail.realized_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
-                  {detail.realized_pnl >= 0 ? "+" : ""}₹{Number(detail.realized_pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                </strong>
-              </div>
-            </div>
+          {/* ============================================================ */}
+          {/* 50/50 DUAL-WING INTELLIGENCE CENTER                          */}
+          {/* ============================================================ */}
+          {(() => {
+            // Computed Position Analytics
+            const posAnalytics = detail.positions.map((pos) => {
+              const cmp = pos.current_price || pos.avg_buy_price;
+              const target = pos.custom_target_price || pos.ai_target_price || pos.target_sell_price || (pos.avg_buy_price * 1.15);
+              const stopLoss = pos.stop_loss_price || (pos.avg_buy_price * 0.93);
+              const horizon = resolveStockAIHorizon(pos.symbol, pos.horizon);
 
-            {/* Explanation Banner */}
-            <div className="bg-[#111A2E] border border-cyan-500/20 rounded-xl p-3 text-[11px] text-cyan-200 flex items-start gap-2.5">
-              <span className="text-cyan-400 text-sm mt-0.5">ℹ️</span>
-              <p className="leading-relaxed">
-                <strong>How Automated Execution Works:</strong> When live prices update, the background auto-pilot compares your stocks against your targets (Custom Target if set, else AI Target).
-                If CMP reaches the target sell price or drops below stop loss, it automatically executes the sell, credits cash, and logs the trade here.
-              </p>
-            </div>
+              // Time elapsed in days
+              const buyDate = pos.created_at ? new Date(pos.created_at) : new Date();
+              const daysElapsed = Math.max(1, Math.round((Date.now() - buyDate.getTime()) / (1000 * 60 * 60 * 24)));
 
-            {detail.trades.length === 0 ? (
-              <div className="text-center py-6 text-txt-muted text-xs">
-                No trades executed yet. Added stocks and auto-sell orders will appear here.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border/80 text-txt-muted uppercase tracking-wider text-[10px]">
-                      <th className="py-2 px-3">Date & Time</th>
-                      <th className="py-2 px-3">Stock</th>
-                      <th className="py-2 px-3">Action</th>
-                      <th className="py-2 px-3 text-right">Qty</th>
-                      <th className="py-2 px-3 text-right">Price</th>
-                      <th className="py-2 px-3 text-right">Realized P&L</th>
-                      <th className="py-2 px-3">Details</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40">
-                    {detail.trades.map((tr) => {
-                      const isGain = tr.realized_pnl >= 0;
-                      let badge = "bg-blue-500/10 text-blue-400 border-blue-500/30";
-                      if (tr.trade_type === "SELL_TARGET_HIT") badge = "bg-emerald-500/15 text-emerald-400 border-emerald-500/40";
-                      if (tr.trade_type === "SELL_STOP_LOSS") badge = "bg-rose-500/15 text-rose-400 border-rose-500/40";
-                      if (tr.trade_type === "SELL_MANUAL") badge = "bg-amber-500/15 text-amber-400 border-amber-500/40";
+              // Horizon duration bounds
+              let horizonMaxDays = 30;
+              if (horizon.includes("7 – 14") || horizon.includes("7D") || horizon.includes("1W")) horizonMaxDays = 14;
+              else if (horizon.includes("14D – 1M") || horizon.includes("1M")) horizonMaxDays = 30;
+              else if (horizon.includes("3M – 6M") || horizon.includes("3M")) horizonMaxDays = 180;
+              else if (horizon.includes("6M – 1Y") || horizon.includes("6M")) horizonMaxDays = 365;
+              else if (horizon.includes("1Y+")) horizonMaxDays = 540;
 
-                      return (
-                        <tr key={tr.id} className="hover:bg-bg-hover/40 transition-colors">
-                          <td className="py-2.5 px-3 text-txt-muted text-[10px] font-mono">
-                            {new Date(tr.executed_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
-                          </td>
-                          <td className="py-2.5 px-3 font-bold text-white">{tr.symbol}</td>
-                          <td className="py-2.5 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${badge}`}>
-                              {tr.trade_type}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-txt-secondary">
-                            {Number(tr.quantity).toFixed(0)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-white">
-                            ₹{Number(tr.price).toFixed(2)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right">
-                            {tr.trade_type !== "BUY" ? (
-                              <span className={`font-mono font-bold ${isGain ? "text-emerald-400" : "text-rose-400"}`}>
-                                {isGain ? "+" : ""}₹{Number(tr.realized_pnl).toFixed(0)} ({tr.realized_pnl_pct.toFixed(1)}%)
+              // Proximity & Horizon Status
+              const isTargetHit = cmp >= target;
+              const isCloseToTarget = !isTargetHit && cmp >= target * 0.985; // within 1.5%
+              const isNearStopLoss = cmp <= stopLoss * 1.025; // within 2.5% of stop loss
+              const isExpired = daysElapsed > horizonMaxDays && !isTargetHit;
+              const isOnTrack = !isExpired && !isNearStopLoss && !isTargetHit;
+
+              const targetDistPct = ((target - cmp) / cmp) * 100;
+              const stopDistPct = ((cmp - stopLoss) / cmp) * 100;
+              const pnlPct = pos.unrealized_pnl_pct || (((cmp - pos.avg_buy_price) / pos.avg_buy_price) * 100);
+
+              // Runway progress from Buy (0%) to Target (100%)
+              const runwayPct = target > pos.avg_buy_price
+                ? Math.max(0, Math.min(100, Math.round(((cmp - pos.avg_buy_price) / (target - pos.avg_buy_price)) * 100)))
+                : 0;
+
+              return {
+                ...pos,
+                cmp,
+                target,
+                stopLoss,
+                horizon,
+                daysElapsed,
+                horizonMaxDays,
+                isTargetHit,
+                isCloseToTarget,
+                isNearStopLoss,
+                isExpired,
+                isOnTrack,
+                targetDistPct,
+                stopDistPct,
+                pnlPct,
+                runwayPct,
+              };
+            });
+
+            // 1. Target Hit / Close to Target
+            const targetAchievedOrClose = posAnalytics.filter((p) => p.isTargetHit || p.isCloseToTarget);
+
+            // 2. Active on Horizon (On-Track)
+            const activeOnTrack = posAnalytics.filter((p) => p.isOnTrack);
+
+            // 3. Horizon Expired / Target Missed
+            const expiredMissed = posAnalytics.filter((p) => p.isExpired);
+
+            // 4. Capital Defense Warning
+            const capitalDefenseWarning = posAnalytics.filter((p) => p.isNearStopLoss);
+
+            // 5. Alpha Leader vs. Drag
+            const sortedByPnl = [...posAnalytics].sort((a, b) => b.pnlPct - a.pnlPct);
+            const alphaLeader = sortedByPnl.length > 0 ? sortedByPnl[0] : null;
+            const alphaDrag = sortedByPnl.length > 1 ? sortedByPnl[sortedByPnl.length - 1] : null;
+
+            // 6. Capital Velocity & Holding Duration
+            const avgHoldingDays = posAnalytics.length > 0
+              ? Math.round(posAnalytics.reduce((acc, p) => acc + p.daysElapsed, 0) / posAnalytics.length)
+              : 0;
+            const capitalDeployed = detail.invested_capital || 0;
+            const totalVal = detail.total_value || (capitalDeployed + detail.current_cash) || 1;
+            const capitalDeployedPct = Math.min(100, Math.round((capitalDeployed / totalVal) * 100));
+
+            // 7. Overall Sandbox Health Grade
+            const winningPositions = posAnalytics.filter((p) => p.unrealized_pnl >= 0).length;
+            const winRate = posAnalytics.length > 0 ? Math.round((winningPositions / posAnalytics.length) * 100) : 0;
+            let healthGrade = "A+";
+            let healthLabel = "Elite Conviction";
+            let healthColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+            if (detail.total_pnl_pct >= 5 && winRate >= 65) {
+              healthGrade = "A+";
+              healthLabel = "Elite Conviction";
+              healthColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+            } else if (detail.total_pnl_pct >= 1 || winRate >= 50) {
+              healthGrade = "A";
+              healthLabel = "Strong Momentum";
+              healthColor = "text-cyan-400 border-cyan-500/30 bg-cyan-500/10";
+            } else if (detail.total_pnl_pct >= -3) {
+              healthGrade = "B";
+              healthLabel = "Defensive Stance";
+              healthColor = "text-amber-400 border-amber-500/30 bg-amber-500/10";
+            } else {
+              healthGrade = "C-";
+              healthLabel = "Drawdown Alert";
+              healthColor = "text-rose-400 border-rose-500/30 bg-rose-500/10";
+            }
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                {/* ====================================================== */}
+                {/* LEFT WING: SANDBOX PERFORMANCE INTELLIGENCE SUMMARY    */}
+                {/* ====================================================== */}
+                <div className="bg-bg-card border border-border rounded-2xl p-5 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-border/70 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span className="text-cyan-400">⚡</span> Performance Intelligence Summary
+                      </h3>
+                      <p className="text-xs text-slate-300 font-medium mt-0.5">
+                        Real-time AI telemetry, time horizon discipline, and risk monitor
+                      </p>
+                    </div>
+                    <div className={`px-2.5 py-1 rounded-lg border text-xs font-bold font-mono flex items-center gap-1.5 ${healthColor}`}>
+                      <span>GRADE {healthGrade}</span>
+                      <span className="text-xs font-sans font-semibold text-cyan-200">({healthLabel})</span>
+                    </div>
+                  </div>
+
+                  {posAnalytics.length === 0 ? (
+                    <div className="text-center py-12 text-slate-300 text-xs font-medium">
+                      No active positions yet. Add stocks to view live performance intelligence.
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5 text-xs">
+                      {/* Metric 1: Target Achieved / Close to Exit */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <span>🎯</span> Target Hit / Close to Target
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            targetAchievedOrClose.length > 0 ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40" : "bg-slate-800 text-slate-200 border border-slate-700"
+                          }`}>
+                            {targetAchievedOrClose.length} Stocks
+                          </span>
+                        </div>
+                        {targetAchievedOrClose.length === 0 ? (
+                          <p className="text-xs text-slate-300 font-medium mt-1.5">
+                            Autopilot tracking all stocks. No positions currently at or within 1.5% of target.
+                          </p>
+                        ) : (
+                          <div className="mt-2 space-y-1.5">
+                            {targetAchievedOrClose.map((p) => (
+                              <div key={p.id} className="flex items-center justify-between text-xs bg-emerald-500/10 border border-emerald-500/30 rounded px-2.5 py-1.5">
+                                <span className="font-bold text-emerald-300">
+                                  {p.symbol} {p.isTargetHit ? "🎯 Hit Target!" : "⚡ Near Target (1.5%)"}
+                                </span>
+                                <span className="font-mono font-semibold text-slate-200">
+                                  CMP ₹{p.cmp.toFixed(1)} / Tgt ₹{p.target.toFixed(1)} ({p.targetDistPct > 0 ? `+${p.targetDistPct.toFixed(1)}% to go` : "Target Met"})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Metric 2: Active on Horizon (On-Track) */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <span>⏳</span> Active on Horizon (On-Track)
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
+                            {activeOnTrack.length} Positions
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 font-medium mt-1">
+                          Positions executing within expected time window and progressing towards target:
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {activeOnTrack.slice(0, 4).map((p) => (
+                            <span key={p.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#111A2E] border border-cyan-500/40 text-xs">
+                              <strong className="text-white font-bold">{p.symbol}</strong>
+                              <span className="text-cyan-300 font-mono font-bold">Day {p.daysElapsed}/{p.horizonMaxDays}</span>
+                              <span className={p.pnlPct >= 0 ? "text-emerald-300 font-mono font-bold" : "text-amber-300 font-mono font-bold"}>
+                                {p.pnlPct >= 0 ? "+" : ""}{p.pnlPct.toFixed(1)}%
                               </span>
-                            ) : (
-                              <span className="text-txt-muted text-[10px]">—</span>
+                            </span>
+                          ))}
+                          {activeOnTrack.length > 4 && (
+                            <span className="text-xs text-cyan-200 font-bold bg-slate-800 px-2.5 py-1 rounded border border-cyan-500/40 self-center">
+                              +{activeOnTrack.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Metric 3: Horizon Expired / Target Missed */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <span>⚠️</span> Horizon Expired / Target Missed
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            expiredMissed.length > 0 ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-slate-800 text-slate-200 border border-slate-700"
+                          }`}>
+                            {expiredMissed.length} Overdue
+                          </span>
+                        </div>
+                        {expiredMissed.length === 0 ? (
+                          <p className="text-xs text-slate-300 font-medium mt-1.5">
+                            Zero expired horizons. All stocks are within their defined AI time window.
+                          </p>
+                        ) : (
+                          <div className="mt-2 space-y-1.5">
+                            {expiredMissed.map((p) => (
+                              <div key={p.id} className="flex items-center justify-between text-xs bg-amber-500/10 border border-amber-500/30 rounded px-2.5 py-1.5">
+                                <span className="font-bold text-amber-300">
+                                  {p.symbol} ({p.horizon}): {p.daysElapsed} days elapsed
+                                </span>
+                                <span className="font-mono font-semibold text-slate-200">
+                                  CMP ₹{p.cmp.toFixed(1)} vs Tgt ₹{p.target.toFixed(1)} ({p.pnlPct.toFixed(1)}%)
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Metric 4: Capital Defense Warning */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <span>🛡️</span> Capital Defense Monitor (Stop-Loss Proximity)
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            capitalDefenseWarning.length > 0 ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                          }`}>
+                            {capitalDefenseWarning.length > 0 ? `${capitalDefenseWarning.length} at Risk` : "Shield Secure"}
+                          </span>
+                        </div>
+                        {capitalDefenseWarning.length === 0 ? (
+                          <p className="text-xs text-slate-300 font-medium mt-1.5">
+                            Safe buffer maintained across all holdings. Zero positions within 2.5% of stop-loss.
+                          </p>
+                        ) : (
+                          <div className="mt-2 space-y-1.5">
+                            {capitalDefenseWarning.map((p) => (
+                              <div key={p.id} className="flex items-center justify-between text-xs bg-rose-500/15 border border-rose-500/40 rounded px-2.5 py-1.5">
+                                <span className="font-bold text-rose-300">
+                                  🛑 {p.symbol}: Near Stop-Loss (₹{p.stopLoss.toFixed(1)})
+                                </span>
+                                <span className="font-mono font-semibold text-rose-300">
+                                  Buffer: {p.stopDistPct.toFixed(1)}% (CMP ₹{p.cmp.toFixed(1)})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Metric 5: Alpha Leader vs Drag */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3 grid grid-cols-2 gap-3">
+                        <div className="border-r border-border/60 pr-2">
+                          <span className="text-xs uppercase font-extrabold text-cyan-200 tracking-wider block mb-1">
+                            🏆 Alpha Leader
+                          </span>
+                          {alphaLeader ? (
+                            <div>
+                              <div className="font-bold text-white text-sm">{alphaLeader.symbol}</div>
+                              <div className="text-emerald-400 font-mono font-bold text-xs mt-0.5">
+                                +{alphaLeader.pnlPct.toFixed(1)}% (+₹{Math.round(alphaLeader.unrealized_pnl).toLocaleString("en-IN")})
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 text-xs">—</span>
+                          )}
+                        </div>
+                        <div className="pl-1">
+                          <span className="text-xs uppercase font-extrabold text-cyan-200 tracking-wider block mb-1">
+                            ⚓ Performance Drag
+                          </span>
+                          {alphaDrag ? (
+                            <div>
+                              <div className="font-bold text-white text-sm">{alphaDrag.symbol}</div>
+                              <div className={`font-mono font-bold text-xs mt-0.5 ${alphaDrag.pnlPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                {alphaDrag.pnlPct >= 0 ? "+" : ""}{alphaDrag.pnlPct.toFixed(1)}% ({alphaDrag.unrealized_pnl >= 0 ? "+" : ""}₹{Math.round(alphaDrag.unrealized_pnl).toLocaleString("en-IN")})
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 text-xs">—</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Metric 6: Capital Velocity & Holding Duration */}
+                      <div className="bg-bg-surface/70 border border-border/80 rounded-xl p-3 flex items-center justify-between text-xs">
+                        <div>
+                          <span className="text-xs uppercase font-extrabold text-cyan-200 tracking-wider block">
+                            ⏱️ Avg Holding Duration
+                          </span>
+                          <span className="text-base font-bold font-mono text-white mt-0.5 block">
+                            {avgHoldingDays} {avgHoldingDays === 1 ? "Day" : "Days"}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs uppercase font-extrabold text-cyan-200 tracking-wider block">
+                            💼 Capital Deployed
+                          </span>
+                          <span className="text-base font-bold font-mono text-cyan-300 mt-0.5 block">
+                            {capitalDeployedPct}% <span className="text-slate-200 text-xs font-semibold font-sans">({posAnalytics.length} stocks)</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ====================================================== */}
+                {/* RIGHT WING: DYNAMIC VISUAL ANALYTICS SUITE (3 CHARTS)  */}
+                {/* ====================================================== */}
+                <div className="bg-bg-card border border-border rounded-2xl p-5 shadow-xl space-y-4">
+                  {/* Dynamic Graph Tab Switcher */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/70 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span className="text-purple-400">📊</span> Visual Analytics Suite
+                      </h3>
+                      <p className="text-xs text-slate-300 font-medium mt-0.5">
+                        Interactive runway, allocation donut & horizon matrix
+                      </p>
+                    </div>
+
+                    {/* Chart Tabs */}
+                    <div className="flex items-center gap-1 bg-bg-surface p-1 rounded-xl border border-border text-xs">
+                      <button
+                        onClick={() => setChartTab("RUNWAY")}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
+                          chartTab === "RUNWAY" ? "bg-cyan-500/25 text-cyan-200 border border-cyan-400" : "text-slate-300 hover:text-white"
+                        }`}
+                      >
+                        <span>🎯</span> Runway
+                      </button>
+                      <button
+                        onClick={() => setChartTab("ALLOCATION")}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
+                          chartTab === "ALLOCATION" ? "bg-purple-500/25 text-purple-200 border border-purple-400" : "text-slate-300 hover:text-white"
+                        }`}
+                      >
+                        <span>🍩</span> Allocation
+                      </button>
+                      <button
+                        onClick={() => setChartTab("HORIZON")}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition-colors flex items-center gap-1.5 ${
+                          chartTab === "HORIZON" ? "bg-emerald-500/25 text-emerald-200 border border-emerald-400" : "text-slate-300 hover:text-white"
+                        }`}
+                      >
+                        <span>🗺️</span> Horizon Map
+                      </button>
+                    </div>
+                  </div>
+
+                  {posAnalytics.length === 0 ? (
+                    <div className="text-center py-12 text-slate-300 text-xs font-medium">
+                      Visual charts will appear dynamically as you add stocks to this sandbox.
+                    </div>
+                  ) : (
+                    <div>
+                      {/* CHART 1: TARGET PROXIMITY RUNWAY */}
+                      {chartTab === "RUNWAY" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
+                            <span>Stock & Target Horizon</span>
+                            <span>Stop-Loss ◄ Buy (0%) ► Target (100%)</span>
+                          </div>
+
+                          <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                            {posAnalytics.map((p) => {
+                              const isProfitable = p.cmp >= p.avg_buy_price;
+                              const runwayColor = p.isTargetHit
+                                ? "from-emerald-500 to-emerald-400"
+                                : p.isCloseToTarget
+                                ? "from-cyan-500 to-emerald-400"
+                                : isProfitable
+                                ? "from-blue-600 to-cyan-400"
+                                : "from-rose-600 to-amber-500";
+
+                              return (
+                                <div key={p.id} className="bg-bg-surface/80 border border-border/80 rounded-xl p-3 space-y-2">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-white text-sm">{p.symbol}</span>
+                                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-[#111A2E] text-cyan-200 border border-cyan-500/40">
+                                        {p.horizon}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 font-mono text-xs">
+                                      <span className="text-slate-200 font-medium">CMP: ₹{p.cmp.toFixed(1)}</span>
+                                      <span className={`font-bold ${p.pnlPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                        ({p.pnlPct >= 0 ? "+" : ""}{p.pnlPct.toFixed(1)}%)
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Runway Progress Bar */}
+                                  <div className="relative pt-1">
+                                    <div className="h-3 w-full bg-slate-900/90 rounded-full border border-border/70 overflow-hidden relative">
+                                      {/* Target fill bar */}
+                                      <div
+                                        className={`h-full bg-gradient-to-r ${runwayColor} transition-all duration-500 rounded-full`}
+                                        style={{ width: `${Math.max(4, p.runwayPct)}%` }}
+                                      />
+                                    </div>
+
+                                    {/* Markers and labels */}
+                                    <div className="flex items-center justify-between text-xs text-slate-200 mt-1 font-mono font-semibold">
+                                      <span className="text-rose-300 font-bold">🛑 SL: ₹{p.stopLoss.toFixed(1)}</span>
+                                      <span className="text-slate-200">Buy: ₹{p.avg_buy_price.toFixed(1)}</span>
+                                      <span className="text-emerald-300 font-bold">🎯 Tgt: ₹{p.target.toFixed(1)}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center justify-between text-xs pt-1 border-t border-border/40">
+                                    <span className="text-slate-200">
+                                      Holding: <strong className="text-white font-bold">{p.daysElapsed} days</strong> ({p.daysElapsed <= p.horizonMaxDays ? `${p.horizonMaxDays - p.daysElapsed}d remaining` : `${p.daysElapsed - p.horizonMaxDays}d overdue`})
+                                    </span>
+                                    <span className="font-bold text-cyan-300">
+                                      {p.isTargetHit ? "🎯 Target Achieved" : `${p.runwayPct}% Runway Completed`}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CHART 2: CAPITAL ALLOCATION & CASH RESERVE DONUT */}
+                      {chartTab === "ALLOCATION" && (() => {
+                        const totalPortfolioVal = detail.total_value || 1;
+                        const cashPct = Math.round((detail.current_cash / totalPortfolioVal) * 100);
+
+                        // Donut slices
+                        const palette = ["#10b981", "#8b5cf6", "#f59e0b", "#ec4899", "#3b82f6", "#14b8a6", "#6366f1", "#06b6d4"];
+                        const stockSlices = posAnalytics.map((p, idx) => {
+                          const val = p.current_value || (p.quantity * p.cmp);
+                          const pct = Math.round((val / totalPortfolioVal) * 100);
+                          return {
+                            symbol: p.symbol,
+                            value: val,
+                            pct,
+                            color: palette[idx % palette.length],
+                          };
+                        });
+
+                        // High concentration warning (> 30%)
+                        const concentratedStocks = stockSlices.filter((s) => s.pct > 30);
+
+                        // Precise SVG Arc calculations (eliminates dash hit-test collisions)
+                        const allSlices = [
+                          {
+                            symbol: "Cash Reserve",
+                            value: Math.max(0, detail.current_cash || 0),
+                            pct: cashPct,
+                            color: "#06b6d4",
+                          },
+                          ...stockSlices,
+                        ];
+
+                        const totalSlicesVal = allSlices.reduce((acc, s) => acc + s.value, 0) || 1;
+                        let accumulatedAngle = -Math.PI / 2; // Start from top (12 o'clock)
+                        const R = 39; // Radius
+                        const cx = 50;
+                        const cy = 50;
+
+                        const arcSlices = allSlices.map((s) => {
+                          const fraction = Math.max(0.001, s.value / totalSlicesVal);
+                          const sliceAngle = fraction * 2 * Math.PI;
+                          const startAngle = accumulatedAngle;
+                          const endAngle = accumulatedAngle + sliceAngle;
+                          accumulatedAngle = endAngle;
+
+                          const x1 = cx + R * Math.cos(startAngle);
+                          const y1 = cy + R * Math.sin(startAngle);
+                          const safeEnd = Math.min(endAngle, startAngle + 2 * Math.PI - 0.001);
+                          const x2 = cx + R * Math.cos(safeEnd);
+                          const y2 = cy + R * Math.sin(safeEnd);
+                          const largeArcFlag = sliceAngle > Math.PI ? 1 : 0;
+                          const pathD = `M ${x1.toFixed(3)} ${y1.toFixed(3)} A ${R} ${R} 0 ${largeArcFlag} 1 ${x2.toFixed(3)} ${y2.toFixed(3)}`;
+
+                          return {
+                            ...s,
+                            pathD,
+                            sliceAngle,
+                          };
+                        });
+
+                        return (
+                          <div className="space-y-4">
+                            <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
+                              {/* SVG Donut */}
+                              <div className="relative w-44 h-44 flex items-center justify-center">
+                                <svg
+                                  className="w-full h-full"
+                                  viewBox="0 0 100 100"
+                                  onMouseLeave={() => setHoveredSlice(null)}
+                                >
+                                  {arcSlices.map((s) => {
+                                    const isHovered = hoveredSlice === s.symbol;
+                                    const isDimmed = Boolean(hoveredSlice && !isHovered);
+
+                                    return (
+                                      <path
+                                        key={s.symbol}
+                                        d={s.pathD}
+                                        fill="none"
+                                        stroke={s.color}
+                                        strokeWidth={isHovered ? 15 : 12}
+                                        strokeLinecap="butt"
+                                        opacity={isDimmed ? 0.35 : 1}
+                                        className="transition-all duration-150 cursor-pointer"
+                                        onMouseEnter={() => setHoveredSlice(s.symbol)}
+                                        onMouseLeave={() => setHoveredSlice(null)}
+                                      >
+                                        <title>{s.symbol}</title>
+                                      </path>
+                                    );
+                                  })}
+                                </svg>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none px-2">
+                                  {hoveredSlice ? (
+                                    <div className="transition-all duration-150">
+                                      <span className="text-sm font-extrabold text-white tracking-wider block truncate max-w-[120px] drop-shadow-md">
+                                        {hoveredSlice}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span className="text-xs text-slate-300 uppercase font-extrabold tracking-wider">Total Value</span>
+                                      <span className="text-xs font-mono font-bold text-white">
+                                        ₹{Math.round(totalPortfolioVal).toLocaleString("en-IN")}
+                                      </span>
+                                      <span className="text-xs font-mono font-bold text-cyan-300">
+                                        {cashPct}% Cash
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Breakdown Legend */}
+                              <div className="space-y-1.5 flex-1 max-h-[220px] overflow-y-auto pr-1 text-xs">
+                                <div
+                                  className={`flex items-center justify-between p-1.5 rounded transition-all cursor-pointer border ${
+                                    hoveredSlice === "Cash Reserve" ? "bg-cyan-500/25 border-cyan-400 ring-1 ring-cyan-400" : "bg-cyan-500/10 border-cyan-500/20"
+                                  }`}
+                                  onMouseEnter={() => setHoveredSlice("Cash Reserve")}
+                                  onMouseLeave={() => setHoveredSlice(null)}
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
+                                    <span className="font-semibold text-white">Cash Reserve</span>
+                                  </div>
+                                  <div className="font-mono text-right">
+                                    <strong className="text-cyan-300">₹{Math.round(detail.current_cash).toLocaleString("en-IN")}</strong>
+                                    <span className="text-slate-300 text-xs ml-1.5 font-semibold">({cashPct}%)</span>
+                                  </div>
+                                </div>
+
+                                {stockSlices.map((s) => (
+                                  <div
+                                    key={s.symbol}
+                                    className={`flex items-center justify-between p-1.5 rounded transition-all cursor-pointer border ${
+                                      hoveredSlice === s.symbol ? "bg-white/10 border-white/40 ring-1 ring-white/30" : "bg-bg-surface border-border/60"
+                                    }`}
+                                    onMouseEnter={() => setHoveredSlice(s.symbol)}
+                                    onMouseLeave={() => setHoveredSlice(null)}
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                                      <span className="font-bold text-white">{s.symbol}</span>
+                                    </div>
+                                    <div className="font-mono text-right">
+                                      <span className="text-slate-200 font-semibold">₹{Math.round(s.value).toLocaleString("en-IN")}</span>
+                                      <span className="text-slate-300 text-xs ml-1.5 font-semibold">({s.pct}%)</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {concentratedStocks.length > 0 && (
+                              <div className="p-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs text-amber-200 flex items-center gap-2">
+                                <span>⚠️</span>
+                                <span>Concentration Alert: <strong>{concentratedStocks.map(s => s.symbol).join(", ")}</strong> exceeds 30% of total sandbox capital.</span>
+                              </div>
                             )}
-                          </td>
-                          <td className="py-2.5 px-3 text-txt-secondary text-[11px] max-w-sm truncate">
-                            {tr.notes}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          </div>
+                        );
+                      })()}
+
+                      {/* CHART 3: TIME HORIZON STRATEGY DISTRIBUTION MAP */}
+                      {chartTab === "HORIZON" && (() => {
+                        const buckets: { title: string; range: string; icon: string; items: typeof posAnalytics }[] = [
+                          {
+                            title: "Ultra Short-Term",
+                            range: "7 – 14 Days",
+                            icon: "⚡",
+                            items: posAnalytics.filter((p) => p.horizon.includes("7 – 14") || p.horizon.includes("7D") || p.horizon.includes("1W")),
+                          },
+                          {
+                            title: "Momentum Swing",
+                            range: "14D – 1M",
+                            icon: "🚀",
+                            items: posAnalytics.filter((p) => p.horizon.includes("14D – 1M") || p.horizon.includes("1M")),
+                          },
+                          {
+                            title: "Positional Growth",
+                            range: "3M – 6M",
+                            icon: "📈",
+                            items: posAnalytics.filter((p) => p.horizon.includes("3M – 6M") || p.horizon.includes("3M")),
+                          },
+                          {
+                            title: "Core Compounder",
+                            range: "6M – 1Y+",
+                            icon: "🏛️",
+                            items: posAnalytics.filter((p) => p.horizon.includes("6M") || p.horizon.includes("1Y") || p.horizon.includes("Flexible")),
+                          },
+                        ];
+
+                        return (
+                          <div className="space-y-3">
+                            <p className="text-xs text-slate-300 font-medium">
+                              Stocks classified by AI conviction timeframe, tracking target deadlines & drift.
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto pr-1">
+                              {buckets.map((b) => (
+                                <div key={b.range} className="bg-bg-surface/80 border border-border/80 rounded-xl p-3 space-y-2">
+                                  <div className="flex items-center justify-between border-b border-border/50 pb-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <span>{b.icon}</span>
+                                      <span className="font-bold text-white text-xs">{b.title}</span>
+                                    </div>
+                                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-[#111A2E] text-cyan-200 border border-cyan-500/40">
+                                      {b.range}
+                                    </span>
+                                  </div>
+
+                                  {b.items.length === 0 ? (
+                                    <div className="text-xs text-slate-300 py-2 text-center font-medium">
+                                      0 positions in this horizon
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      {b.items.map((p) => (
+                                        <div key={p.id} className="p-2 rounded bg-bg-card border border-border/60 text-xs space-y-1">
+                                          <div className="flex items-center justify-between">
+                                            <strong className="text-white font-bold">{p.symbol}</strong>
+                                            <span className={`font-mono font-bold ${p.pnlPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                              {p.pnlPct >= 0 ? "+" : ""}{p.pnlPct.toFixed(1)}%
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center justify-between text-xs text-slate-300 font-mono font-semibold">
+                                            <span>Day {p.daysElapsed}/{p.horizonMaxDays}</span>
+                                            <span className={p.isExpired ? "text-amber-300 font-bold" : "text-emerald-300 font-bold"}>
+                                              {p.isExpired ? "⚠️ Overdue" : "🟢 On Schedule"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+            );
+          })()}
         </div>
       )}
 

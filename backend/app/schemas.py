@@ -247,6 +247,7 @@ class ArenaOrderCreate(BaseModel):
     horizon: str = "1M"
     rationale: str | None = None
     custom_buy_price: float | None = None
+    ai_score: int | None = None
 
 
 class ArenaImportAIPicks(BaseModel):

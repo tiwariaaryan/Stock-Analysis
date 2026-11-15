@@ -90,11 +90,19 @@ export default function PortfolioDetailPage({ params }: { params: Promise<{ id: 
   if (!pf) return <div className="p-6 text-center text-txt-muted">Portfolio not found</div>;
 
   const hasCur = pf.total_current != null;
+  const xirrVal = analytics?.xirr_pct != null
+    ? `${analytics.xirr_pct >= 0 ? "+" : ""}${Number(analytics.xirr_pct).toFixed(2)}%`
+    : "—";
+  const xirrColor = analytics?.xirr_pct != null
+    ? (analytics.xirr_pct >= 0 ? "text-gain" : "text-loss")
+    : "text-txt-dim";
+
   const summaryCards = [
-    { label: "Total Invested", val: `₹${fmt(pf.total_invested)}`, color: "text-txt-primary" },
-    { label: "Current Value", val: hasCur ? `₹${fmt(pf.total_current)}` : "—", color: "text-txt-primary" },
-    { label: "Total P&L", val: pf.total_pnl ? `${Number(pf.total_pnl) >= 0 ? "+" : ""}₹${fmt(pf.total_pnl)}` : "—", color: pf.total_pnl && Number(pf.total_pnl) >= 0 ? "text-gain" : "text-loss" },
-    { label: "Returns", val: pf.total_pnl_pct != null ? `${pf.total_pnl_pct >= 0 ? "+" : ""}${pf.total_pnl_pct.toFixed(2)}%` : "—", color: pf.total_pnl_pct != null && pf.total_pnl_pct >= 0 ? "text-gain" : "text-loss" },
+    { label: "Total Invested", val: `₹${fmt(pf.total_invested)}`, color: "text-txt-primary", tooltip: "Total capital deployed across all active holdings" },
+    { label: "Current Value", val: hasCur ? `₹${fmt(pf.total_current)}` : "—", color: "text-txt-primary", tooltip: "Live market value based on latest stock prices" },
+    { label: "Total P&L", val: pf.total_pnl ? `${Number(pf.total_pnl) >= 0 ? "+" : ""}₹${fmt(pf.total_pnl)}` : "—", color: pf.total_pnl && Number(pf.total_pnl) >= 0 ? "text-gain" : "text-loss", tooltip: "Unrealized gain or loss on current holdings" },
+    { label: "Returns", val: pf.total_pnl_pct != null ? `${pf.total_pnl_pct >= 0 ? "+" : ""}${pf.total_pnl_pct.toFixed(2)}%` : "—", color: pf.total_pnl_pct != null && pf.total_pnl_pct >= 0 ? "text-gain" : "text-loss", tooltip: "Overall percentage return on invested capital" },
+    { label: "Annualized XIRR", val: xirrVal, color: xirrColor, tooltip: "Money-weighted annualized return (Newton-Raphson cash flow model)" },
   ];
 
   const signalMap = new Map((aiAudit?.holdings_signals || []).map((s) => [s.holding_id, s]));
@@ -111,10 +119,13 @@ export default function PortfolioDetailPage({ params }: { params: Promise<{ id: 
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {summaryCards.map(c => (
-          <div key={c.label} className="bg-bg-card border border-border rounded-lg px-4 py-3.5">
-            <p className="text-[11px] text-txt-muted mb-1">{c.label}</p>
+          <div key={c.label} className="bg-bg-card border border-border rounded-lg px-4 py-3.5" title={c.tooltip}>
+            <p className="text-[11px] text-txt-muted mb-1 flex items-center justify-between">
+              <span>{c.label}</span>
+              {c.label === "Annualized XIRR" && <span className="text-[9px] px-1 rounded bg-accent/20 text-accent-light">AI</span>}
+            </p>
             <p className={`text-lg font-bold font-mono ${c.color}`}>{c.val}</p>
           </div>
         ))}

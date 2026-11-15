@@ -2,7 +2,7 @@ import os
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -19,18 +19,34 @@ router = APIRouter(prefix="/api/v1")
 
 @router.post("/market/stocks/{symbol}/sync")
 async def sync_single_stock(symbol: str, db: Session = Depends(get_db)):
-    """Live Sync: on-demand single stock price fetch from free providers (Google Finance / yfinance)."""
+    """Live Sync: on-demand single stock price fetch from waterfall quoting engine."""
+    from ..services.market_service import _fetch_quote_waterfall, _save_quote_to_db
     resolved = resolve_symbol(symbol)
-    q = await market_data.quote(resolved)
-    if q and q.price is not None:
-        inst = get_or_create_instrument(db, resolved)
-        cache_market_price(db, inst, q)
+    clean = resolved.upper().replace(".NS", "").replace(".BO", "")
+    inst = get_or_create_instrument(db, clean)
+    q = _fetch_quote_waterfall(clean)
+    if q and q.get("price") and q["price"] > 0:
+        _save_quote_to_db(db, inst, q)
+        return {
+            "symbol": clean,
+            "price": float(q["price"]),
+            "change": float(q["change"]) if q.get("change") is not None else None,
+            "change_pct": float(q["change_pct"]) if q.get("change_pct") is not None else None,
+            "source": q.get("source", "waterfall"),
+            "status": "synced",
+            "as_of": datetime.now(UTC).isoformat(),
+        }
+    q_fallback = await market_data.quote(resolved)
+    if q_fallback and q_fallback.price is not None:
+        cache_market_price(db, inst, q_fallback)
         return {
             "symbol": resolved,
-            "price": float(q.price),
-            "source": q.source,
+            "price": float(q_fallback.price),
+            "change": None,
+            "change_pct": None,
+            "source": q_fallback.source,
             "status": "synced",
-            "as_of": q.as_of.isoformat() if q.as_of else datetime.now(UTC).isoformat(),
+            "as_of": q_fallback.as_of.isoformat() if q_fallback.as_of else datetime.now(UTC).isoformat(),
         }
     raise HTTPException(status_code=502, detail=f"Could not sync live quote for {symbol}")
 
@@ -55,10 +71,19 @@ async def list_stocks(db: Session = Depends(get_db)):
         mp = db.query(MarketPrice).filter(
             MarketPrice.instrument_id == inst.id,
         ).order_by(MarketPrice.fetched_at.desc()).first()
+
+        p = mp.price if mp else None
+        chg_pct = mp.change_pct if mp else None
+        # Mathematical safety: calculate change_pct if stuck at 0.0 while price and prev_close differ
+        if (chg_pct is None or float(chg_pct) == 0.0) and mp and mp.prev_close and float(mp.prev_close) > 0 and p:
+            diff = float(p) - float(mp.prev_close)
+            if abs(diff) > 0.0001:
+                chg_pct = round((diff / float(mp.prev_close)) * 100, 2)
+
         results.append(MarketStock(
             symbol=s, name=n, sector=sec,
-            price=mp.price if mp else None,
-            change_pct=mp.change_pct if mp else None,
+            price=p,
+            change_pct=chg_pct,
         ))
     return results
 
@@ -69,7 +94,7 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
     if not raw_q:
         return []
 
-    from ..services.market_service import _fetch_quote_fast, _save_quote_to_db
+    from ..services.market_service import _fetch_quote_waterfall, _save_quote_to_db
 
     resolved_q = resolve_symbol(raw_q)
     matches: list[MarketStock] = []
@@ -85,13 +110,19 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
             p = mp.price if mp else None
             chg_pct = mp.change_pct if mp else None
 
-            # If no cached price, quick fetch so search result has price
+            # If no cached price, quick fetch via waterfall
             if p is None:
-                q_data = _fetch_quote_fast(s)
+                q_data = _fetch_quote_waterfall(s)
                 if q_data:
                     _save_quote_to_db(db, inst, q_data)
                     p = q_data["price"]
                     chg_pct = q_data["change_pct"]
+
+            # Mathematical safety against stuck +0.00%
+            if (chg_pct is None or float(chg_pct) == 0.0) and mp and mp.prev_close and float(mp.prev_close) > 0 and p:
+                diff = float(p) - float(mp.prev_close)
+                if abs(diff) > 0.0001:
+                    chg_pct = round((diff / float(mp.prev_close)) * 100, 2)
 
             matches.append(MarketStock(
                 symbol=s, name=n, sector=sec,
@@ -114,11 +145,17 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
             chg_pct = mp.change_pct if mp else None
 
             if p is None:
-                q_data = _fetch_quote_fast(inst.symbol)
+                q_data = _fetch_quote_waterfall(inst.symbol)
                 if q_data:
                     _save_quote_to_db(db, inst, q_data)
                     p = q_data["price"]
                     chg_pct = q_data["change_pct"]
+
+            # Mathematical safety against stuck +0.00%
+            if (chg_pct is None or float(chg_pct) == 0.0) and mp and mp.prev_close and float(mp.prev_close) > 0 and p:
+                diff = float(p) - float(mp.prev_close)
+                if abs(diff) > 0.0001:
+                    chg_pct = round((diff / float(mp.prev_close)) * 100, 2)
 
             matches.append(MarketStock(
                 symbol=inst.symbol, name=inst.name or inst.symbol,
@@ -127,7 +164,7 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
             ))
             existing_syms.add(inst.symbol)
 
-    # 3. Live search via Yahoo Finance Search API for any unlisted stock / ETF (e.g. ITBEE -> ITBEES, SUZLON, IRFC)
+    # 3. Live search via Yahoo Finance Search API for any unlisted stock / ETF
     if len(raw_q) >= 2:
         import httpx
         try:
@@ -151,16 +188,21 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
                                 price = mp.price if mp else None
                                 change_pct = mp.change_pct if mp else None
 
-                                # Quick fetch for the price so search card has live data
                                 if price is None:
                                     try:
-                                        q_data = _fetch_quote_fast(clean_sym)
+                                        q_data = _fetch_quote_waterfall(clean_sym)
                                         if q_data:
                                             _save_quote_to_db(db, inst, q_data)
                                             price = q_data["price"]
                                             change_pct = q_data["change_pct"]
                                     except Exception:
                                         pass
+
+                                # Mathematical safety against stuck +0.00%
+                                if (change_pct is None or float(change_pct) == 0.0) and mp and mp.prev_close and float(mp.prev_close) > 0 and price:
+                                    diff = float(price) - float(mp.prev_close)
+                                    if abs(diff) > 0.0001:
+                                        change_pct = round((diff / float(mp.prev_close)) * 100, 2)
 
                                 matches.append(MarketStock(
                                     symbol=clean_sym,
@@ -173,10 +215,10 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
         except Exception:
             pass
 
-    # 4. If still no matches, try direct fast fetch for the resolved symbol
+    # 4. If still no matches, try direct waterfall fetch for the resolved symbol
     if not matches:
         try:
-            q_data = _fetch_quote_fast(resolved_q)
+            q_data = _fetch_quote_waterfall(resolved_q)
             if q_data:
                 inst = get_or_create_instrument(db, resolved_q)
                 _save_quote_to_db(db, inst, q_data)
@@ -194,6 +236,8 @@ async def search_stocks(q: str = "", db: Session = Depends(get_db)):
 
     return matches
 
+    return matches
+
 
 @router.get("/market/indices", response_model=list[MarketIndexOut])
 async def get_market_indices(db: Session = Depends(get_db)):
@@ -201,14 +245,14 @@ async def get_market_indices(db: Session = Depends(get_db)):
 
 
 @router.post("/market/refresh-all")
-async def refresh_all_prices(db: Session = Depends(get_db)):
-    result = await refresh_all_locked(db)
+async def refresh_all_prices(user_id: int | None = Query(default=None), db: Session = Depends(get_db)):
+    result = await refresh_all_locked(db, user_id=user_id)
     # Check if any updated price hit target or stop-loss in active sandboxes
     try:
-        from ..services.arena_service import execute_auto_trades_for_all_active_sandboxes
-        execute_auto_trades_for_all_active_sandboxes(db)
-    except Exception:
-        pass
+        from ..services.arena_service import check_and_execute_arena_triggers
+        check_and_execute_arena_triggers(db)
+    except Exception as e:
+        print(f"[arena-auto-trigger-error] {e}")
     return result
 
 
@@ -337,19 +381,23 @@ async def stock_detail(symbol: str, db: Session = Depends(get_db)):
             if cached:
                 price = float(cached)
 
-        prev = float(fi.previous_close) if fi and fi.previous_close else None
-        if not prev and hist_df is not None and len(hist_df) > 1:
-            prev = float(hist_df["Close"].iloc[-2])
-
-        change = round(price - prev, 2) if price and prev else None
-        change_pct = round((change / prev) * 100, 2) if change and prev else None
-
         inst = db.query(Instrument).filter(Instrument.symbol == symbol.upper()).first()
         if not inst:
             inst = get_or_create_instrument(db, symbol.upper())
         name = inst.name if inst and inst.name else symbol.upper()
         sector = inst.sector if inst and inst.sector else None
         industry = inst.industry if inst and inst.industry else None
+
+        mp = db.query(MarketPrice).filter(MarketPrice.instrument_id == inst.id).order_by(MarketPrice.fetched_at.desc()).first()
+
+        prev = float(fi.previous_close) if fi and fi.previous_close else None
+        if not prev and hist_df is not None and len(hist_df) > 1:
+            prev = float(hist_df["Close"].iloc[-2])
+        if not prev and mp and mp.prev_close:
+            prev = float(mp.prev_close)
+
+        change = round(price - prev, 2) if price and prev else (float(mp.change) if mp and mp.change is not None else None)
+        change_pct = round((change / prev) * 100, 2) if change and prev else (float(mp.change_pct) if mp and mp.change_pct is not None else None)
 
         open_val = Decimal(str(round(fi.open, 4))) if fi and fi.open else None
         high_val = Decimal(str(round(fi.day_high, 4))) if fi and fi.day_high else None

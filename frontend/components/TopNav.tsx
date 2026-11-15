@@ -40,7 +40,8 @@ export default function TopNav() {
     setRefreshing(true);
     setToast(null);
     try {
-      const res = await fetch(`${API}/api/v1/market/refresh-all`, { method: "POST" });
+      const url = profile?.id ? `${API}/api/v1/market/refresh-all?user_id=${profile.id}` : `${API}/api/v1/market/refresh-all`;
+      const res = await fetch(url, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setLastRefresh("just now");
@@ -77,23 +78,27 @@ export default function TopNav() {
           <span className="text-[13px] text-txt-muted ml-1">{label}</span>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all border ${
-              refreshing
-                ? "bg-accent text-white border-accent shadow-lg shadow-accent/25 animate-pulse"
-                : "bg-bg-card border-border text-txt-secondary hover:text-white hover:bg-accent hover:border-accent hover:shadow-lg hover:shadow-accent/20"
-            }`}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-              className={refreshing ? "animate-spin" : ""}>
-              <path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-            </svg>
-            {refreshing ? "Refreshing Prices..." : "Refresh Prices"}
-          </button>
-          {lastRefresh && !refreshing && (
-            <span className="text-[10px] text-txt-dim">{lastRefresh}</span>
+          {!isHome && (
+            <>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all border ${
+                  refreshing
+                    ? "bg-accent text-white border-accent shadow-lg shadow-accent/25 animate-pulse"
+                    : "bg-bg-card border-border text-txt-secondary hover:text-white hover:bg-accent hover:border-accent hover:shadow-lg hover:shadow-accent/20"
+                }`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  className={refreshing ? "animate-spin" : ""}>
+                  <path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+                </svg>
+                {refreshing ? "Refreshing Prices..." : "Refresh Prices"}
+              </button>
+              {lastRefresh && !refreshing && (
+                <span className="text-[10px] text-txt-dim">{lastRefresh}</span>
+              )}
+            </>
           )}
           <div className="flex items-center gap-1.5 ml-1">
             <div className="w-1.5 h-1.5 rounded-full bg-gain" />

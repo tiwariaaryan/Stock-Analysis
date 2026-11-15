@@ -34,6 +34,7 @@ SCANNER_UNIVERSE = [
     {"symbol": "LT", "name": "Larsen & Toubro", "category": "Large Cap", "asset_type": "EQUITY"},
     {"symbol": "ITC", "name": "ITC Limited", "category": "Large Cap", "asset_type": "EQUITY"},
     {"symbol": "TMPV", "name": "Tata Motors Passenger", "category": "Large Cap", "asset_type": "EQUITY"},
+    {"symbol": "TMCV", "name": "Tata Motors Commercial", "category": "Large Cap", "asset_type": "EQUITY"},
     {"symbol": "MARUTI", "name": "Maruti Suzuki", "category": "Large Cap", "asset_type": "EQUITY"},
     {"symbol": "SUNPHARMA", "name": "Sun Pharma", "category": "Large Cap", "asset_type": "EQUITY"},
     {"symbol": "TITAN", "name": "Titan Company", "category": "Large Cap", "asset_type": "EQUITY"},

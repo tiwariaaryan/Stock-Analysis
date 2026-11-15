@@ -266,34 +266,50 @@ export default function AIIntelligencePage() {
   const handleAddAndReplace = async (stock: DiscoveredStock) => {
     const uid = getEffectiveUserId();
     try {
-      // 1. Get user watchlists
+      // 1. Get user watchlists (or auto-create default if none exist)
+      let targetListId: number | null = null;
       const wRes = await fetch(`${API}/api/v1/watchlists?user_id=${uid}`);
       if (wRes.ok) {
         const lists = await wRes.json();
         if (lists && lists.length > 0) {
-          const targetListId = lists[0].id;
-          const addRes = await fetch(`${API}/api/v1/watchlists/${targetListId}/items`, {
+          targetListId = lists[0].id;
+        } else {
+          // Auto-create default watchlist for new user
+          const createRes = await fetch(`${API}/api/v1/watchlists?user_id=${uid}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              symbol: stock.symbol.toUpperCase(),
-              target_buy_price: stock.horizon_target || stock.current_price,
-              notes: `Added from AI Discovery Telecast (${stock.action})`,
-            }),
+            body: JSON.stringify({ name: "Primary Wishlist", description: "Default AI Wishlist" }),
           });
-
-          if (addRes.ok) {
-            setToastMessage(`✓ Added ${stock.symbol} to Wishlist! Auto-replacing candidate...`);
-            setTimeout(() => setToastMessage(null), 3000);
-
-            // Close pop-up if currently opened for this stock
-            if (selectedStock?.symbol === stock.symbol) {
-              setSelectedStock(null);
-            }
-
-            // Trigger instant refresh to exclude added stock and pull next untouched candidate
-            loadDiscoveryData(true);
+          if (createRes.ok) {
+            const newList = await createRes.json();
+            targetListId = newList.id;
           }
+        }
+      }
+
+      if (targetListId) {
+        const addRes = await fetch(`${API}/api/v1/watchlists/${targetListId}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: stock.symbol.toUpperCase(),
+            target_buy_price: stock.current_price,
+            target_sell_price: stock.horizon_target || null,
+            notes: `Added from AI Discovery Telecast (${stock.action})`,
+          }),
+        });
+
+        if (addRes.ok) {
+          setToastMessage(`✓ Added ${stock.symbol} to Wishlist! Auto-replacing candidate...`);
+          setTimeout(() => setToastMessage(null), 3000);
+
+          // Close pop-up if currently opened for this stock
+          if (selectedStock?.symbol === stock.symbol) {
+            setSelectedStock(null);
+          }
+
+          // Trigger instant refresh to exclude added stock and pull next untouched candidate
+          loadDiscoveryData(true);
         }
       }
     } catch {
