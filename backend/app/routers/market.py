@@ -202,7 +202,14 @@ async def get_market_indices(db: Session = Depends(get_db)):
 
 @router.post("/market/refresh-all")
 async def refresh_all_prices(db: Session = Depends(get_db)):
-    return await refresh_all_locked(db)
+    result = await refresh_all_locked(db)
+    # Check if any updated price hit target or stop-loss in active sandboxes
+    try:
+        from ..services.arena_service import execute_auto_trades_for_all_active_sandboxes
+        execute_auto_trades_for_all_active_sandboxes(db)
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/market/refresh-status")

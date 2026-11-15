@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models import Instrument, MarketPrice, MarketIndex, Portfolio, Watchlist
+from ..models import Instrument, MarketPrice, MarketIndex, Portfolio, Watchlist, ArenaPosition
 from ..providers.yfinance_provider import YFinanceEodProvider
 from ..providers.google_finance_provider import GoogleFinanceProvider
 from ..providers.nse_india_provider import NseIndiaProvider
@@ -304,6 +304,8 @@ async def refresh_all_prices(db: Session) -> dict:
     for w in db.query(Watchlist).all():
         for it in w.items:
             symbols.add(resolve_symbol(it.symbol))
+    for pos in db.query(ArenaPosition).all():
+        symbols.add(resolve_symbol(pos.symbol))
     # Also include any active equity/ETF instruments in DB
     for inst in db.query(Instrument).filter(Instrument.is_active == True).all():
         if inst.asset_type != "MUTUAL_FUND" and " " not in inst.symbol:
