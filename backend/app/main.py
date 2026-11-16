@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .database import Base, engine
 from .routers import system, market, portfolios, watchlists, chat, profiles, strategy, notifications, arena
+from .routers import ai_intelligence, discovery
+from .routers import market_detail
 
 
 @asynccontextmanager
@@ -34,10 +36,13 @@ app.add_middleware(
 app.include_router(system.router)
 app.include_router(profiles.router)
 app.include_router(market.router)
+app.include_router(market_detail.router)
 app.include_router(portfolios.router)
 app.include_router(watchlists.router)
 app.include_router(chat.router)
 app.include_router(strategy.router)
+app.include_router(ai_intelligence.router)
+app.include_router(discovery.router)
 app.include_router(notifications.router)
 app.include_router(arena.router)
 

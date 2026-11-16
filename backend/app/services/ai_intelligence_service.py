@@ -18,100 +18,13 @@ from ..services.serper_service import (
     get_daily_context, get_serper_call_count, get_cache_status,
 )
 
+from .ai_gemini_resilient import call_gemini_resilient as _call_gemini, parse_gemini_json as _parse_json  # noqa: F401
+
 _active_alerts: list[dict] = []
 _discovery_cache: dict | None = None
 _discovery_cache_time: datetime | None = None
 _gemini_client = None
 _gemini_model = None
-
-
-def _call_gemini(prompt: str) -> str:
-    """Resilient Gemini caller with automatic variant downgrade and retry logic.
-    Hierarchy:
-    1. Requested Model (e.g. gemini-3.5-flash)
-    2. Lower variant: gemini-3.5-flash-lite (high separate quota availability)
-    3. Stable fallback: gemini-2.5-flash
-    4. Fast fallback: gemini-3.1-flash-lite
-    5. Evergreen fallback: gemini-flash-latest
-    Includes transient retry with backoff and automatic dual API key failover.
-    """
-    import time
-    from ..config import get_settings
-    from google import genai
-
-    settings = get_settings()
-    keys_to_try = [k for k in [settings.gemini_api_key, settings.gemini_api_key1] if k]
-    # Deduplicate keys while preserving order
-    keys_to_try = list(dict.fromkeys(keys_to_try))
-
-    models_to_try = [
-        settings.gemini_model,
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-latest",
-    ]
-    # Deduplicate models while preserving order
-    models_to_try = [m for m in dict.fromkeys(models_to_try) if m]
-
-    if not keys_to_try:
-        print("[ai-intel] No Gemini API key configured")
-        return "{}"
-
-    saved_proxy = {}
-    for k in list(os.environ):
-        if "proxy" in k.lower() and k not in ("NO_PROXY", "no_proxy"):
-            saved_proxy[k] = os.environ.pop(k)
-
-    try:
-        for key_idx, key in enumerate(keys_to_try):
-            client = genai.Client(api_key=key, http_options={"timeout": 30000})
-            for model in models_to_try:
-                for retry in range(2):
-                    try:
-                        response = client.models.generate_content(model=model, contents=prompt)
-                        text = (response.text or "").strip()
-                        if text:
-                            return text
-                    except Exception as e:
-                        err = str(e)
-                        is_quota_exhausted = "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower()
-                        is_model_unavailable = "404" in err or "NOT_FOUND" in err or "no longer available" in err.lower()
-                        is_transient = "503" in err or "UNAVAILABLE" in err or "timeout" in err.lower()
-
-                        print(f"[ai-intel] [Key {key_idx+1}] Model {model} attempt {retry+1} error: {err[:90]}")
-
-                        # If higher variant quota is exhausted, immediately drop down to lower variant
-                        if is_quota_exhausted:
-                            print(f"[ai-intel] Quota reached for {model} -> trying lower variant...")
-                            break  # Break inner retry loop to try next model in cascade
-
-                        if is_model_unavailable:
-                            break  # Try next model in cascade
-
-                        if is_transient and retry == 0:
-                            time.sleep(1.0)
-                            continue  # Quick retry on transient hiccup
-                        break
-        return "{}"
-    finally:
-        os.environ.update(saved_proxy)
-
-
-def _parse_json(text: str) -> dict | list:
-    text = re.sub(r'^```json\s*', '', text.strip())
-    text = re.sub(r'\s*```$', '', text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r'[\[{].*[\]}]', text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group())
-            except json.JSONDecodeError:
-                pass
-    return {}
 
 
 def _call_info(serper: int, gemini: int) -> dict:
